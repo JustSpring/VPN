@@ -80,11 +80,7 @@ class Proxy:
         except Exception as e:
             logging.error(f"Error forwarding data: {e}")
             raise e
-        # finally:
-        #     if isinstance(src,socket.socket) and isinstance(src,socket.socket):
-        #         logging.info(f"Closed connection between {src.getpeername()} and {dst.getpeername()}.")
-        #         src.close()
-        #         dst.close()
+
 
     def get_host_port(self, request):
 

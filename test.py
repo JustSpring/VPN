@@ -1,10 +1,7 @@
-import winreg
-INTERNET_SETTINGS = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-    r'Software\Microsoft\Windows\CurrentVersion\Internet Settings',
-    0, winreg.KEY_ALL_ACCESS)
-
-def set_key(name, value, type):
-    winreg.SetValueEx(INTERNET_SETTINGS, name, 0, type, value)
-
-set_key('ProxyEnable', 1, winreg.REG_DWORD)
-set_key('ProxyServer', "127.0.0.1:8080", winreg.REG_SZ)
+import os
+CERT_DIR = os.path.join(os.getcwd(), 'certificates')
+SERVER_CERT_PATH = os.path.join(CERT_DIR, 'server_cert.pem')
+SERVER_KEY_PATH = os.path.join(CERT_DIR, 'server_key.pem')
+CLIENT_CERT_PATH = os.path.join(CERT_DIR, 'client_cert.pem')
+CLIENT_KEY_PATH = os.path.join(CERT_DIR, 'client_key.pem')
+CA_CERT_PATH = os.path.join(CERT_DIR, 'ca_cert.pem')

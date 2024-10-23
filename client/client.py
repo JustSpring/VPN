@@ -2,7 +2,6 @@ import pickle
 import ssl
 import socket
 import threading
-
 from shared.config import Addreses
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization,hashes
@@ -13,6 +12,7 @@ import datetime
 import winreg as reg
 import logging
 import pyotp
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class Client:
@@ -53,7 +53,7 @@ dzZQuZXVEEtJjarOdw==
             encryption_algorithm=serialization.NoEncryption()
         )
 
-        with open("certificates/initial_client_key.pem", "wb") as key_file:
+        with open(Addreses.CLIENT_INITIAL_KEY_PATH, "wb") as key_file:
             key_file.write(pem)
         csr = x509.CertificateSigningRequestBuilder().subject_name(
             x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, u"clientVPN.example.com")])).sign(client_private_key,hashes.SHA256(),default_backend())
@@ -65,16 +65,16 @@ dzZQuZXVEEtJjarOdw==
         cert = cert.not_valid_before(datetime.datetime.utcnow()).not_valid_after(
             datetime.datetime.utcnow() + datetime.timedelta(days=365))
         cert = cert.sign(client_private_key, hashes.SHA256(), default_backend())
-        with open("certificates/initial_client_cert.pem", "wb") as key_file:
+        with open(Addreses.CLIENT_INITIAL_CERT_PATH, "wb") as key_file:
             key_file.write(cert.public_bytes(serialization.Encoding.PEM))
 
-    def get_certificates(self,username,password,totp, host=Addreses.SERVER_IP, port=Addreses.SERVER_PORT_CERT): # TODO- MOVE TO AUTH_SERVER
+    def get_certificates(self,username,password,totp, host=Addreses.SERVER_IP, port=Addreses.SERVER_PORT_CERT):
         self.create_initial_certificates()
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         client_socket.connect((host, port))
         context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        context.load_cert_chain(certfile="certificates/initial_client_cert.pem", keyfile="certificates/initial_client_key.pem")
+        context.load_cert_chain(certfile=Addreses.CLIENT_INITIAL_CERT_PATH, keyfile=Addreses.CLIENT_INITIAL_KEY_PATH)
         context.load_verify_locations(cadata=self.SERVER_CA_CERT)
         print(f"Client connected to {Addreses.SERVER_IP}:{Addreses.SERVER_PORT}")
 
@@ -86,7 +86,7 @@ dzZQuZXVEEtJjarOdw==
             print("Wrong username or password!")
             return
         client_cert,client_key=pickle.loads(msg)
-        with open("certificates/client_cert.pem", "wb") as file:
+        with open(Addreses.CLIENT_CERT_PATH, "wb") as file:
             file.write(client_cert)
         with open("certificates/client_key.pem", "wb") as file:
             file.write(client_key)
@@ -94,7 +94,7 @@ dzZQuZXVEEtJjarOdw==
     def create_ssl_context(self):
         context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         context.load_verify_locations(cadata=self.SERVER_CA_CERT)
-        context.load_cert_chain(certfile="certificates/client_cert.pem", keyfile="certificates/client_key.pem")
+        context.load_cert_chain(certfile=Addreses.CLIENT_CERT_PATH, keyfile=Addreses.CLIENT_KEY_PATH)
         return context
 
     def create_client_socket(self, host=Addreses.SERVER_IP, port=Addreses.SERVER_PORT):
@@ -102,10 +102,10 @@ dzZQuZXVEEtJjarOdw==
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_socket.connect((host,port))
         print(f"Client connected to {Addreses.SERVER_IP}:{Addreses.SERVER_PORT}")
-        self.client_socket = context.wrap_socket(client_socket, server_side=False) #TODO- change to True
+        self.client_socket = context.wrap_socket(client_socket, server_side=False)
 
 
-    def start_local_proxy_server(self,host="127.0.0.1",port=8080):
+    def start_local_proxy_server(self,host=Addreses.LOCAL_PROXY_IP,port=Addreses.LOCAL_PROXY_PORT):
         local_server=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
         local_server.bind((host,port))
         local_server.listen(5)
@@ -122,39 +122,7 @@ dzZQuZXVEEtJjarOdw==
         threading.Thread(target=self.forward_data, args=(local_client, server_socket), daemon=True).start()
         threading.Thread(target=self.forward_data, args=(server_socket, local_client), daemon=True).start()
 
-        # request = b''
-        # try:
-        #     while True:
-        #         data = conn.recv(4096)
-        #         if not data:
-        #             break
-        #         request += data
-        #         if len(data) < 4096:
-        #             break
-        #     if not request:
-        #         conn.close()
-        #         return
-        #     secure_socket.sendall(request)
-        #
-        #     # Get response from server
-        #     response = b''
-        #     while True:
-        #         data = secure_socket.recv(4096)
-        #         if not data:
-        #             print("break")
-        #             break
-        #         response += data
-        #         if len(data) < 4096:
-        #             print("break2")
-        #             break
-        #     print(response)
-        #     # Send the response back to the local application
-        #     conn.sendall(response)
-        # except Exception as e:
-        #     print(f"Error handling local client: {e}")
-        #     raise e
-        # finally:
-        #     conn.close()
+
     def forward_data(self, src, dst):
         try:
             while True:

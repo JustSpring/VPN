@@ -15,17 +15,9 @@ def transfer_cert(socket):
     if not username or not password or not totp:
         socket.close()
         return
-
     ans = check_user(username, password,totp)
     if ans != 0:
         msg=ans
     else:
         msg= create_all_keys()
     socket.send(pickle.dumps(msg))
-    return
-
-
-
-
-
-
