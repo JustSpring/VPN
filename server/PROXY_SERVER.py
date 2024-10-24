@@ -28,7 +28,6 @@ class Proxy:
     def handle_client_request(self, client_socket):
         try:
             request = self.recv_all(client_socket)
-            print(request)
             if not request:
                 client_socket.close()
                 return
@@ -44,7 +43,6 @@ class Proxy:
             dst_socket = socket.create_connection((dst_host, dst_port))
             dst_socket.settimeout(30)  # set timeout to prevent blocking indefinitely
             if connect:
-                print("sent 200")
                 client_socket.sendall(b'HTTP/1.1 200 Connection Established\r\n\r\n')
             else:
                 dst_socket.sendall(request)
@@ -95,7 +93,7 @@ class Proxy:
         if not lines:
             return None, None
 
-        # Extract the request line (e.g., GET http://example.com/ HTTP/1.1)
+        # Extract the request line
         request_line = lines[0]
         parts = request_line.split()
         if len(parts) < 3:
@@ -134,7 +132,6 @@ class Proxy:
         return host, port,connect
 
     def recv_all(self, sock):
-
         data = b''
         try:
             while True:

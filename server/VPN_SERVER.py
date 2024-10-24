@@ -7,7 +7,7 @@ import auth_handler
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
+#TODO Add Revocation List
 class Server:
     def __init__(self):
         self.socket = None

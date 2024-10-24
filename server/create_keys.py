@@ -40,7 +40,7 @@ def sign_csr_by_ca(ca_private_key,ca_cert,csr):
     client_cert=x509.CertificateBuilder().subject_name(csr.subject)
     client_cert=client_cert.issuer_name(ca_cert.subject)
     client_cert= client_cert.public_key(csr.public_key()).serial_number(x509.random_serial_number())
-    client_cert = client_cert.not_valid_before(datetime.datetime.utcnow()).not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=365))
+    client_cert = client_cert.not_valid_before(datetime.datetime.utcnow()).not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=30))
     client_cert=client_cert.sign(ca_private_key,hashes.SHA256(),default_backend())
     with open("certificates/client/client_cert.pem", "wb") as cert_file:
         cert_file.write(client_cert.public_bytes(serialization.Encoding.PEM))

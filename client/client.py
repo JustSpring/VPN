@@ -12,6 +12,8 @@ import datetime
 import winreg as reg
 import logging
 import pyotp
+import os.path
+from OpenSSL import crypto
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -145,14 +147,44 @@ dzZQuZXVEEtJjarOdw==
         except Exception as error:
             print(f'ERROR: {str(error)}')
         return False
+    def check_certificates(self):
+        if os.path.isfile(Addreses.CLIENT_CERT_PATH) and os.path.isfile(Addreses.CLIENT_KEY_PATH):
+            with open(Addreses.CLIENT_CERT_PATH, 'r') as cert_file:
+                cert_data = cert_file.read()
+
+            x509 = crypto.load_certificate(crypto.FILETYPE_PEM, cert_data)
+
+            # Get the notAfter field in bytes
+            not_after_bytes = x509.get_notAfter()
+
+            # Decode the bytes to a string
+            timestamp = not_after_bytes.decode('utf-8')
+
+            # Remove 'Z' if present, because 'Z' means UTC and doesn't match strptime's %z
+            timestamp = timestamp.rstrip('Z')
+
+            # Use datetime.strptime directly without creating a datetime object
+            expiration_date = datetime.datetime.strptime(timestamp, '%Y%m%d%H%M%S')
+            current_time = datetime.datetime.utcnow()
+            if current_time > expiration_date:
+                return False
+            return True
+        else:
+            return False
+    def connect(self,name,password,totp):
+        if not self.check_certificates():
+            self.get_certificates(name,password,totp)
+        client.create_client_socket()
+        client.start_local_proxy_server()
+        client.enable_proxy('127.0.0.1:8080')
+
+
 
 if __name__ == "__main__":
     client = Client()
-    client.create_initial_certificates()
     totp = pyotp.TOTP("C2PJL3YGQVKAIDC5QJF7DYFPFTQ2QBET")
-    client.get_certificates("aviv", "12345678",totp.now())
-    client.create_client_socket()
-    client.start_local_proxy_server()
-    client.enable_proxy('127.0.0.1:8080')
+    client.connect("aviv", "12345678",totp.now())
+
+
 
 

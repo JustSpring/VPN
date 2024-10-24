@@ -59,18 +59,23 @@ def decrypt_totp(aes_key, encrypted_totp):
     return decrypted_totp.decode()
 
 def check_user(username,password,totp):
+    """
+    :param username: user username
+    :param password: user password (not hashed)
+    :param totp: 6 Digit one time code
+    :return:
+        0-
+
+    """
+
     con = sqlite3.connect("users.db")
     cur = con.cursor()
     encoded_aes_key=keyring.get_password("TOTP_AES_ENCRYPTION",username)
     aes_key=base64.b64decode(encoded_aes_key)
 
-
-
     try:
         res = cur.execute("SELECT username, password, gotKey, totpKey from users where username=? AND password=? ",(username, hashlib.sha256(password.encode()).hexdigest()))
         user= res.fetchall()
-        # print(user)
-        # print(decrypt_totp(aes_key,user[0][3]))
         totp_server = pyotp.TOTP(decrypt_totp(aes_key,user[0][3]))
         if totp_server.now() != totp:
             return -1
@@ -84,6 +89,7 @@ def check_user(username,password,totp):
     return -1
 
 if __name__=="__main__":
+    # <<- Testing Code ->>
     key=pyotp.random_base32()
     key="C2PJL3YGQVKAIDC5QJF7DYFPFTQ2QBET"
     totp = pyotp.TOTP(key)
