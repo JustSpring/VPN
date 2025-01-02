@@ -1,13 +1,15 @@
 import os
 class Addreses():
     # Server IP and Ports
-    SERVER_IP="192.168.68.129"
-    SERVER_PORT=443
-    SERVER_PORT_CERT=442
-    SERVER_PROXY_IP="192.168.68.129"
-    SERVER_PROXY_PORT = 2345
-    LOCAL_PROXY_IP="127.0.0.1"
-    LOCAL_PROXY_PORT = 8080
+    SERVER_IP="127.0.0.1"
+    SERVER_PORT=8081
+    SERVER_PORT_CERT=441 # 442
+    SERVER_PORT_CONTROL = 331
+    SERVER_PROXY_IPS=["192.168.68.135"]
+    SERVER_PROXY_PORT = 2255
+    LOCAL_PROXY_IP="0.0.0.0"
+    LOCAL_PROXY_PORT = 9090
+
 
     # Paths for certificates
     CERT_DIR = os.path.join(os.getcwd(), 'certificates')

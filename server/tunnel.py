@@ -1,16 +1,25 @@
 # tunnel.py
 import socket
-import threading
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from shared.config import Addreses
 import logging
-
+import threading
+import users_table
+import active_users
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def tunnel(client_socket, proxy_host=Addreses.SERVER_PROXY_IP, proxy_port=Addreses.SERVER_PROXY_PORT):
+
+def tunnel(client_socket,client_ip):
+    # proxy_host = Addreses.SERVER_PROXY_IP
+    proxy_port = Addreses.SERVER_PROXY_PORT
     logging.info("STARTING TUNNEL")
+    proxy_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
+        proxy_host = active_users.get_proxy_by_ip(client_ip)
         # Connect to the proxy server
-        proxy_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
         proxy_socket.connect((proxy_host, proxy_port))
         logging.info(f"Connected to proxy server: {proxy_host}:{proxy_port}")
 
@@ -31,6 +40,7 @@ def tunnel(client_socket, proxy_host=Addreses.SERVER_PROXY_IP, proxy_port=Addres
         client_socket.close()
         logging.info("Tunnel closed.")
 
+
 def forward(source, destination):
     try:
         while True:
@@ -42,9 +52,7 @@ def forward(source, destination):
             logging.info(f"Forwarded {len(data)} bytes from {source.getpeername()} to {destination.getpeername()}")
     except Exception as e:
         logging.error(f"Error forwarding data: {e}")
-    # finally:
-        # logging.info(f"Closed connection between {source.getpeername()} and {destination.getpeername()}.")
-        # if source:
-        #     source.close()
-        # if destination:
-        #     destination.close()
+
+
+if __name__ == "__main__":
+    pass

@@ -1,13 +1,16 @@
 import socket
 import threading
-from shared.config import Addreses
 import logging
 from urllib.parse import urlparse
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from shared.config import Addreses
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class Proxy:
-    def __init__(self, host=Addreses.SERVER_PROXY_IP, port=Addreses.SERVER_PROXY_PORT):
+    def __init__(self, host="192.168.68.135", port=Addreses.SERVER_PROXY_PORT):
         self.host = host
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -31,105 +34,137 @@ class Proxy:
             if not request:
                 client_socket.close()
                 return
+            if isinstance(request, bytes):
+                request = request.decode('utf-8', errors='ignore')
 
-            dst_host, dst_port,connect = self.get_host_port(request)
-            if not dst_host or not dst_port:
-                logging.error("Failed to parse host and port from request.")
-                client_socket.close()
+            if request.startswith("CONNECT"):
+                self.handle_https(request, client_socket)
+                return
+            elif "HTTP" in request:
+                self.handle_http(request, client_socket)
+                return
+            elif self.is_ftp_request(request):
+                self.handle_ftp(client_socket, request)
                 return
 
-            logging.info(f"Forwarding request to {dst_host} on port {dst_port}")
-
-            dst_socket = socket.create_connection((dst_host, dst_port))
-            dst_socket.settimeout(30)  # set timeout to prevent blocking indefinitely
-            if connect:
-                client_socket.sendall(b'HTTP/1.1 200 Connection Established\r\n\r\n')
-            else:
-                dst_socket.sendall(request)
-
-            # Start bidirectional forwarding
-            client_to_server = threading.Thread(target=self.forward_data, args=(client_socket, dst_socket), daemon=True)
-            server_to_client = threading.Thread(target=self.forward_data, args=(dst_socket, client_socket), daemon=True)
-
-            client_to_server.start()
-            server_to_client.start()
-
-
-
+            logging.warning("Unsupported protocol or malformed request.")
+            client_socket.close()
 
         except Exception as e:
             logging.error(f"Error handling client request: {e}")
             client_socket.close()
-        except socket.timeout:
-            logging.warning("Receive operation timed out.")
-        # finally:
-        #     client_socket.close()
 
     def forward_data(self, src, dst):
         try:
-            print(src)
             while True:
                 data = src.recv(4096)
                 if not data:
                     break
-                logging.info(f"Attempting to Forward {len(data)} bytes from {src.getpeername()} to {dst.getpeername()}")
                 dst.sendall(data)
-                logging.info(f"Forwarded {len(data)} bytes from {src.getpeername()} to {dst.getpeername()}")
         except Exception as e:
             logging.error(f"Error forwarding data: {e}")
-            raise e
 
+    def handle_http(self, request, client_socket):
+        try:
+            lines = request.split('\r\n')
+            if not lines:
+                return
 
-    def get_host_port(self, request):
+            request_line = lines[0]
+            parts = request_line.split()
+            if len(parts) < 3:
+                return
 
-        if isinstance(request, bytes):
-            request = request.decode('utf-8', errors='ignore')
-        if request.startswith("CONNECT"):
-            connect=True
-        else:
-            connect=False
-        # Split the request into lines
-        lines = request.split('\r\n')
-        if not lines:
-            return None, None
+            method, url, protocol = parts
+            parsed_url = urlparse(url)
+            host = parsed_url.hostname
+            port = parsed_url.port or 80
 
-        # Extract the request line
-        request_line = lines[0]
-        parts = request_line.split()
-        if len(parts) < 3:
-            return None, None
+            for line in lines:
+                if line.lower().startswith('host:'):
+                    host_header = line.split(':', 1)[1].strip()
+                    if ':' in host_header:
+                        host, port = host_header.split(':')
+                        port = int(port)
+                    else:
+                        host = host_header
+                    break
 
-        method, url, protocol = parts
+            dst_socket = socket.create_connection((host, port))
+            dst_socket.settimeout(30)
 
-        # Parse the URL to extract components
-        parsed_url = urlparse(url)
-        host = parsed_url.hostname
-        port = parsed_url.port
+            dst_socket.sendall(request.encode())
 
-        # Default ports based on the scheme
-        if not port:
-            if parsed_url.scheme == 'http':
-                port = 80
-            elif parsed_url.scheme == 'https':
-                port = 443
+            threading.Thread(target=self.forward_data, args=(client_socket, dst_socket), daemon=True).start()
+            threading.Thread(target=self.forward_data, args=(dst_socket, client_socket), daemon=True).start()
+
+        except Exception as e:
+            logging.error(f"Error handling HTTP request: {e}")
+            client_socket.close()
+
+    def handle_https(self, request, client_socket):
+        try:
+            lines = request.split('\r\n')
+            if not lines:
+                return
+
+            request_line = lines[0]
+            parts = request_line.split()
+            if len(parts) < 3:
+                return
+
+            _, host_port, _ = parts
+            if ':' in host_port:
+                host, port = host_port.split(':')
+                port = int(port)
             else:
-                port = 80  # Default to 80 if scheme is unrecognized
+                host = host_port
+                port = 443
 
-        # Override with Host header if present
-        for line in lines:
-            if line.lower().startswith('host:'):
-                host_header = line.split(':', 1)[1].strip()
-                if ':' in host_header:
-                    host, port_str = host_header.split(':', 1)
-                    try:
-                        port = int(port_str)
-                    except ValueError:
-                        port = port  # Keep previous port if conversion fails
-                else:
-                    host = host_header
-                break
+            dst_socket = socket.create_connection((host, port))
+            dst_socket.settimeout(30)
 
-        return host, port,connect
+            client_socket.sendall(b'HTTP/1.1 200 Connection Established\r\n\r\n')
+
+            threading.Thread(target=self.forward_data, args=(client_socket, dst_socket), daemon=True).start()
+            threading.Thread(target=self.forward_data, args=(dst_socket, client_socket), daemon=True).start()
+
+        except Exception as e:
+            logging.error(f"Error handling HTTPS request: {e}")
+            client_socket.close()
+
+    def is_ftp_request(self, request):
+        ftp_commands = ["USER", "PASS", "LIST", "RETR", "STOR", "QUIT", "PORT", "PASV"]
+        for cmd in ftp_commands:
+            if request.startswith(cmd):
+                return True
+        return False
+
+    def handle_ftp(self, client_socket, request):
+        try:
+            lines = request.split('\r\n')
+            ftp_host = None
+            for line in lines:
+                if line.startswith("USER"):
+                    # Extract host from USER command, e.g., USER ftp.server.com
+                    ftp_host = line.split()[1]
+                    break
+
+            if not ftp_host:
+                logging.error("Could not extract FTP host from request.")
+                client_socket.close()
+                return
+
+            ftp_port = 21  # Default FTP port
+            ftp_socket = socket.create_connection((ftp_host, ftp_port))
+            ftp_socket.settimeout(30)
+
+            threading.Thread(target=self.forward_data, args=(client_socket, ftp_socket), daemon=True).start()
+            threading.Thread(target=self.forward_data, args=(ftp_socket, client_socket), daemon=True).start()
+
+        except Exception as e:
+            logging.error(f"Error handling FTP request: {e}")
+            client_socket.close()
 
     def recv_all(self, sock):
         data = b''
@@ -146,7 +181,7 @@ class Proxy:
         except Exception as e:
             logging.error(f"Error receiving data: {e}")
         finally:
-            sock.settimeout(None)  # Reset timeout
+            sock.settimeout(None)
         return data
 
 if __name__ == "__main__":

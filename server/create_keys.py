@@ -4,10 +4,11 @@ from cryptography.hazmat.primitives import serialization,hashes
 from cryptography.hazmat.backends import default_backend
 from cryptography import x509
 import datetime
-import logging
 import cProfile
 import pstats
 from cryptography.x509.oid import NameOID
+import logging
+
 logging.basicConfig(level=logging.INFO)
 
 
@@ -36,16 +37,58 @@ def generate_client_csr(client_private_key):
 
     return csr
 
-def sign_csr_by_ca(ca_private_key,ca_cert,csr):
-    client_cert=x509.CertificateBuilder().subject_name(csr.subject)
-    client_cert=client_cert.issuer_name(ca_cert.subject)
-    client_cert= client_cert.public_key(csr.public_key()).serial_number(x509.random_serial_number())
-    client_cert = client_cert.not_valid_before(datetime.datetime.utcnow()).not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=30))
-    client_cert=client_cert.sign(ca_private_key,hashes.SHA256(),default_backend())
+def sign_csr_by_ca(ca_private_key, ca_cert, csr):
+    serial=x509.random_serial_number()
+    client_cert = (
+        x509.CertificateBuilder()
+        .subject_name(csr.subject)
+        .issuer_name(ca_cert.subject)
+        .public_key(csr.public_key())
+        .serial_number(serial)
+        .not_valid_before(datetime.datetime.utcnow())
+        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=30))
+        .add_extension(
+            x509.BasicConstraints(ca=False, path_length=None), critical=True
+        )
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                key_encipherment=True,
+                content_commitment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                encipher_only=False,
+                decipher_only=False,
+                key_cert_sign=False,
+                crl_sign=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH]),
+            critical=True,  # Ensure this is for client authentication
+        )
+        # Add the Subject Key Identifier (SKI) extension
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(csr.public_key()),
+            critical=False,
+        )
+        # Add the Authority Key Identifier (AKI) extension
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_private_key.public_key()),
+            critical=False,
+        )
+        .sign(ca_private_key, hashes.SHA256(), default_backend())
+    )
+
     with open("certificates/client/client_cert.pem", "wb") as cert_file:
         cert_file.write(client_cert.public_bytes(serialization.Encoding.PEM))
-    logging.info("Created client_cert.pem")
-    return client_cert
+
+    logging.info("Created client_cert.pem with Authority Key Identifier")
+    return serial
+
+
+
 def load_ca_private_key():
     with open("certificates/ca_key.pem","rb") as key_file:
         ca_private_key=serialization.load_pem_private_key(key_file.read(),password=None,backend=default_backend())
@@ -59,8 +102,8 @@ def create_all_keys():
     csr=generate_client_csr(client_private_key)
     ca_private_key= load_ca_private_key()
     ca_cert=load_ca_cert()
-    sign_csr_by_ca(ca_private_key,ca_cert,csr)
-    return open("certificates/client/client_cert.pem",mode="rb").read(),open("certificates/client/client_key.pem",mode="rb").read()
+    serial=sign_csr_by_ca(ca_private_key,ca_cert,csr)
+    return open("certificates/client/client_cert.pem",mode="rb").read(),open("certificates/client/client_key.pem",mode="rb").read(),serial
 
 
 # TODO- Create CSR for the client and sign it with CA
