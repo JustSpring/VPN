@@ -10,7 +10,8 @@ from shared.config import Addreses
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class Proxy:
-    def __init__(self, host="192.168.68.135", port=Addreses.SERVER_PROXY_PORT):
+    # Fix host for different proxy
+    def __init__(self, host=Addreses.SERVER_PROXY_IPS[0], port=Addreses.SERVER_PROXY_PORT):
         self.host = host
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

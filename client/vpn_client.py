@@ -17,6 +17,7 @@ import logging
 import pyotp
 import os.path
 from OpenSSL import crypto
+import time
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -26,6 +27,16 @@ class Client:
         self.client_socket = None
         self.control_socket= None
         self.proxy_list=[]
+        self.data_sent=0
+        self.current_index=0
+        self.stats= {
+        "window_size": 5,
+        "total_bytes": 0,
+        "current_index": 0,
+        "arr": [0] * 5,
+        "last_time": int(time.time()),
+        "active_seconds": 0
+        }
         with open("certificates/ca_cert.pem", "r") as key_file:
             self.SERVER_CA_CERT = key_file.read()
 
@@ -186,7 +197,7 @@ class Client:
                                                 server_hostname="clientVPN.example.com")
 
             threading.Thread(target=self.forward_data, args=(local_client, server_socket), daemon=True).start()
-            threading.Thread(target=self.forward_data, args=(server_socket, local_client), daemon=True).start()
+            threading.Thread(target=self.forward_data_to_client, args=(server_socket, local_client), daemon=True).start()
         except Exception as e:
             logger.error(f"Error handling local client: {e}")
             raise e
@@ -205,6 +216,46 @@ class Client:
         finally:
             src.close()
             dst.close()
+    def forward_data_to_client(self, src, dst):
+        try:
+            while True:
+                data = src.recv(4096)
+                if not data:
+                    break
+                dst.sendall(data)
+                self.update(len(data))
+                logger.info(f"Forwarded {len(data)} bytes from {src.getpeername()} to {dst.getpeername()}")
+        except Exception as e:
+            logger.error(f"Error forwarding data: {e}")
+            raise e
+        finally:
+            src.close()
+            dst.close()
+
+    def update(self,l):
+        temp_index = self.stats["current_index"]
+        if int(time.time()) - self.stats["last_time"] > 0:
+            for _ in range(min(self.stats["window_size"], int(time.time()) - self.stats["last_time"])):
+                temp_index = (temp_index + 1) % self.stats["window_size"]
+                self.stats["total_bytes"] -= self.stats["arr"][temp_index]
+                if self.stats["arr"][temp_index] > 0:
+                    self.stats["active_seconds"] -= 1
+                    self.stats["arr"][temp_index] = 0
+            self.stats["current_index"] = temp_index
+        if self.stats["arr"][self.stats["current_index"]] == 0:
+            self.stats["active_seconds"] += 1
+        self.stats["arr"][self.stats["current_index"]] += l
+        self.stats["total_bytes"] += l
+        self.stats["last_time"] = int(time.time())
+
+    def calculate_speed(self):
+        speed= self.stats["total_bytes"] / self.stats["window_size"]
+        if speed <= 1024:
+            return str(speed) + " Bytes"
+        if speed <= 1048576:
+            return str(round((speed / 1024),2)) + "KB"
+        return str(round((speed / 1048576),2)) + "MB"
+
 
     def enable_proxy(self, addr):
         internet_settings = r'Software\Microsoft\Windows\CurrentVersion\Internet Settings'

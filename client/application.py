@@ -14,6 +14,8 @@ from kivy.uix.spinner import Spinner
 from kivy.core.window import Window
 from kivy.uix.widget import Widget
 import vpn_client  # Ensure this is your actual VPN client module
+from kivy.clock import Clock
+
 
 # Set window size (optional)
 Window.size = (400, 600)
@@ -67,7 +69,7 @@ class LoginScreen(Screen):
         # IP Address Input
         self.ip_address = TextInput(
             hint_text="Server IP Address",
-            text="127.0.0.1",
+            text="172.16.9.246",
             font_size=16,
             multiline=False,
             background_normal='',
@@ -156,7 +158,7 @@ class LoginScreen(Screen):
             self.show_error_popup("Input Error", "All fields are required.")
             return
 
-        # Call VPN client's `get_certificates` method
+        # Call VPN client's get_certificates method
         try:
             res = self.vpn_client.get_certificates(username, password, totp_code, ip_address)
         except Exception as e:
@@ -178,8 +180,13 @@ class LoginScreen(Screen):
         """Displays an error popup."""
         popup_content = BoxLayout(orientation="vertical", padding=20, spacing=20)
         popup_content.add_widget(Label(text=message, font_size=16, color=TEXT_COLOR))
-        close_btn = Button(text="Close", size_hint=(1, 0.3), background_normal='', background_color=PRIMARY_COLOR,
-                           color=TEXT_COLOR)
+        close_btn = Button(
+            text="Close",
+            size_hint=(1, 0.3),
+            background_normal='',
+            background_color=PRIMARY_COLOR,
+            color=TEXT_COLOR
+        )
         popup = Popup(title=title, content=popup_content, size_hint=(0.8, 0.4), auto_dismiss=False)
         close_btn.bind(on_press=popup.dismiss)
         popup_content.add_widget(close_btn)
@@ -270,7 +277,7 @@ class ServerSelectionScreen(Screen):
             # Show success info
             self.show_info_popup("Connected", f"Successfully connected to {selected_server}.")
 
-            # -- Navigate to the new StatisticsScreen
+            # Navigate to the StatisticsScreen
             self.manager.transition = SlideTransition(direction="left")
             self.manager.current = "statistics_screen"
 
@@ -281,8 +288,13 @@ class ServerSelectionScreen(Screen):
         """Displays an error popup."""
         popup_content = BoxLayout(orientation="vertical", padding=20, spacing=20)
         popup_content.add_widget(Label(text=message, font_size=16, color=TEXT_COLOR))
-        close_btn = Button(text="Close", size_hint=(1, 0.3), background_normal='', background_color=PRIMARY_COLOR,
-                           color=TEXT_COLOR)
+        close_btn = Button(
+            text="Close",
+            size_hint=(1, 0.3),
+            background_normal='',
+            background_color=PRIMARY_COLOR,
+            color=TEXT_COLOR
+        )
         popup = Popup(title=title, content=popup_content, size_hint=(0.8, 0.4), auto_dismiss=False)
         close_btn.bind(on_press=popup.dismiss)
         popup_content.add_widget(close_btn)
@@ -292,18 +304,24 @@ class ServerSelectionScreen(Screen):
         """Displays an informational popup."""
         popup_content = BoxLayout(orientation="vertical", padding=20, spacing=20)
         popup_content.add_widget(Label(text=message, font_size=16, color=TEXT_COLOR))
-        close_btn = Button(text="OK", size_hint=(1, 0.3), background_normal='', background_color=ACCENT_COLOR,
-                           color=SECONDARY_COLOR)
+        close_btn = Button(
+            text="OK",
+            size_hint=(1, 0.3),
+            background_normal='',
+            background_color=ACCENT_COLOR,
+            color=SECONDARY_COLOR
+        )
         popup = Popup(title=title, content=popup_content, size_hint=(0.8, 0.4), auto_dismiss=False)
         close_btn.bind(on_press=popup.dismiss)
         popup_content.add_widget(close_btn)
         popup.open()
 
 
-# New screen to appear after pressing Connect - placeholder for future stats
+# Statistics Screen (with "Calculate Speed" button)
 class StatisticsScreen(Screen):
-    def __init__(self, **kwargs):
+    def __init__(self, vpn_client, **kwargs):
         super(StatisticsScreen, self).__init__(**kwargs)
+        self.vpn_client = vpn_client
 
         layout = ModernWidget(orientation="vertical", padding=20, spacing=10)
 
@@ -318,15 +336,28 @@ class StatisticsScreen(Screen):
         title.bind(size=title.setter('text_size'))
         layout.add_widget(title)
 
-        # Placeholder label for future statistical data
-        stats_label = Label(
+        # A label to display stats or speed
+        self.stats_label = Label(
             text="(Statistics will be displayed here...)",
             font_size=16,
             color=TEXT_COLOR
         )
-        layout.add_widget(stats_label)
+        layout.add_widget(self.stats_label)
 
-        # Return / Back Button
+        # Button to calculate speed (manual trigger)
+        speed_button = Button(
+            text="Calculate Speed",
+            font_size=16,
+            size_hint=(1, 0.07),
+            background_normal='',
+            background_color=PRIMARY_COLOR,
+            color=TEXT_COLOR,
+            bold=True
+        )
+        speed_button.bind(on_press=self.calculate_speed)
+        layout.add_widget(speed_button)
+
+        # Back Button
         back_button = Button(
             text="Back to Server Selection",
             font_size=16,
@@ -341,12 +372,31 @@ class StatisticsScreen(Screen):
 
         self.add_widget(layout)
 
+        # Schedule periodic updates
+        Clock.schedule_interval(self.update_speed, 1)  # Update every second
+
+    def calculate_speed(self, instance):
+        try:
+            speed = self.vpn_client.calculate_speed()  # Make sure this method exists in your vpn_client
+            self.stats_label.text = f"Speed: {speed}"
+        except Exception as e:
+            self.stats_label.text = f"Error calculating speed:\n{e}"
+
+    def update_speed(self,dt):
+        try:
+            self.vpn_client.update(0)
+            speed = self.vpn_client.calculate_speed()  # Replace with real-time speed logic
+            self.stats_label.text = f"Live Speed: {speed}"
+
+        except Exception as e:
+            self.stats_label.text = f"Error updating speed:\n{e}"
+
     def back_to_selection(self, instance):
         self.manager.transition = SlideTransition(direction="right")
         self.manager.current = "server_selection"
 
 
-# (Optional) A Home Screen you may or may not still want
+# Optional Home Screen
 class HomeScreen(Screen):
     def __init__(self, **kwargs):
         super(HomeScreen, self).__init__(**kwargs)
@@ -389,24 +439,23 @@ class HomeScreen(Screen):
 
 # Main App with ScreenManager
 class VPNClientApp(App):
-
     def build(self):
-        # Placeholder VPN client
+        # Placeholder VPN client instance
         client = vpn_client.Client()
 
         # ScreenManager with Slide Transition
         sm = ScreenManager(transition=SlideTransition())
 
-        # Add Screens
+        # Add Screens, passing the VPN client where needed
         sm.add_widget(LoginScreen(name="login", vpn_client=client))
         sm.add_widget(ServerSelectionScreen(name="server_selection", vpn_client=client))
-        sm.add_widget(StatisticsScreen(name="statistics_screen"))
+        sm.add_widget(StatisticsScreen(name="statistics_screen", vpn_client=client))
         sm.add_widget(HomeScreen(name="home"))
 
         # Example check if user is already logged in
         try:
             is_logged_in = client.check_certificates()
-            is_logged_in = False  # For demonstration
+            is_logged_in = False  # For demonstration purposes
             servers = ["0.0.0.0"]  # Placeholder
 
             server_selection_screen = sm.get_screen('server_selection')

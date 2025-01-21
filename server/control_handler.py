@@ -34,6 +34,7 @@ def handle_control_client(server, secure_socket, client_address,username):
                 break
 
             elif command.upper() == "LIST_PROXIES":
+                print(f'Sent to {client_address} {server.proxy_list}')
                 secure_socket.sendall(pickle.dumps(server.proxy_list))
 
             elif command.startswith("CHOOSE_PROXY"):

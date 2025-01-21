@@ -166,6 +166,7 @@ class Server:
         for ip in Addreses.SERVER_PROXY_IPS:
             if self.check_socket_open(ip,Addreses.SERVER_PROXY_PORT):
                 self.proxy_list.append(ip)
+        logging.info(f"detected the following proxies: {self.proxy_list}")
 
     def check_socket_open(self,ip, port):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -191,9 +192,7 @@ if __name__ == "__main__":
     server.create_ssl_context()       # For main VPN
     server.create_cert_context()      # For auth server
     server.create_control_context()   # For control server
-
     server.find_all_proxy()
-
     # 2. Create sockets for each service
     server.create_server_socket()
     server.create_auth_server_socket()
