@@ -20,7 +20,7 @@ def initialize_database():
                 username TEXT PRIMARY KEY,
                 password TEXT,
                 gotKey BOOL,
-                totpKey BLOB,
+                totpKey TEXT,
                 certSerial TEXT
             )
         """)
@@ -101,9 +101,11 @@ def decrypt_totp(aes_key, encrypted_totp):
 def check_user(username, password, totp):
     try:
         encoded_aes_key = keyring.get_password("TOTP_AES_ENCRYPTION", username)
+        print(encoded_aes_key)
         if not encoded_aes_key:
             raise ValueError(f"No AES key found for user: {username}")
         aes_key = base64.b64decode(encoded_aes_key)
+        print(aes_key)
         with sqlite3.connect("users.db") as con:
             cur = con.cursor()
             cur.execute("""
@@ -126,12 +128,23 @@ def check_user(username, password, totp):
 
 if __name__ == "__main__":
     initialize_database()
+    # with sqlite3.connect("users.db") as con:
+    #     cur = con.cursor()
+    #     cur.execute("""
+    #         DROP TABLE users
+    #     """)
+    #     # If you also want to drop 'ports', uncomment:
+    #     # cur.execute("""DROP TABLE ports""")
+    #     con.commit()
 
     # Test code
-    key = pyotp.random_base32()
+    # key = pyotp.random_base32()
+    # print(key)
     cert_serial = "1234567890"
-    add_user("aviv", "12345678", key, cert_serial)
+    key = "C2PJL3YGQVKAIDC5QJF7DYFPFTQ2QBET"
+    add_user("peleg", "12345678", key, cert_serial)
+    add_user("aviv", "12345678", key, "0987654321")
     print(get_username(cert_serial))
 
-    totp = pyotp.TOTP(key)
-    print(check_user("aviv", "12345678", totp.now()))
+    # totp = pyotp.TOTP(key)
+    # print(check_user("aviv", "12345678", totp.now()))

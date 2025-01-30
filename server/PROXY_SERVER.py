@@ -6,8 +6,11 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from shared.config import Addreses
+import log_manager
+import active_users
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+BUFFER_SIZE = 65536
 
 class Proxy:
     # Fix host for different proxy
@@ -25,11 +28,11 @@ class Proxy:
             try:
                 client_socket, addr = self.server_socket.accept()
                 logging.info(f"Accepted connection from {addr}")
-                threading.Thread(target=self.handle_client_request, args=(client_socket,), daemon=True).start()
+                threading.Thread(target=self.handle_client_request, args=(client_socket,addr,), daemon=True).start()
             except Exception as e:
                 logging.error(f"Error accepting client connection: {e}")
 
-    def handle_client_request(self, client_socket):
+    def handle_client_request(self, client_socket,addr):
         try:
             request = self.recv_all(client_socket)
             if not request:
@@ -39,15 +42,15 @@ class Proxy:
                 request = request.decode('utf-8', errors='ignore')
 
             if request.startswith("CONNECT"):
-                self.handle_https(request, client_socket)
+                self.handle_https(request, client_socket,addr)
                 return
             elif "HTTP" in request:
-                self.handle_http(request, client_socket)
+                self.handle_http(request, client_socket,addr)
                 return
             elif self.is_ftp_request(request):
                 self.handle_ftp(client_socket, request)
                 return
-
+            print(request)
             logging.warning("Unsupported protocol or malformed request.")
             client_socket.close()
 
@@ -58,14 +61,14 @@ class Proxy:
     def forward_data(self, src, dst):
         try:
             while True:
-                data = src.recv(4096)
+                data = src.recv(BUFFER_SIZE)
                 if not data:
                     break
                 dst.sendall(data)
         except Exception as e:
             logging.error(f"Error forwarding data: {e}")
 
-    def handle_http(self, request, client_socket):
+    def handle_http(self, request, client_socket,client_address):
         try:
             lines = request.split('\r\n')
             if not lines:
@@ -90,6 +93,9 @@ class Proxy:
                     else:
                         host = host_header
                     break
+            name = active_users.get_name_by_port(client_address[1])
+            if name:
+                log_manager.add_full_logging(name,host,port,"HTTP")
 
             dst_socket = socket.create_connection((host, port))
             dst_socket.settimeout(30)
@@ -103,7 +109,7 @@ class Proxy:
             logging.error(f"Error handling HTTP request: {e}")
             client_socket.close()
 
-    def handle_https(self, request, client_socket):
+    def handle_https(self, request, client_socket,client_address):
         try:
             lines = request.split('\r\n')
             if not lines:
@@ -121,7 +127,9 @@ class Proxy:
             else:
                 host = host_port
                 port = 443
-
+            name=active_users.get_name_by_port(client_address[1])
+            if name:
+                log_manager.add_full_logging(name,host,port ,"HTTPS")
             dst_socket = socket.create_connection((host, port))
             dst_socket.settimeout(30)
 

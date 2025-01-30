@@ -69,7 +69,7 @@ class LoginScreen(Screen):
         # IP Address Input
         self.ip_address = TextInput(
             hint_text="Server IP Address",
-            text="172.16.9.246",
+            text="192.168.68.127",
             font_size=16,
             multiline=False,
             background_normal='',
@@ -84,7 +84,7 @@ class LoginScreen(Screen):
         # Username Input
         self.username = TextInput(
             hint_text="Username",
-            text="aviv",
+            text="peleg",
             font_size=16,
             multiline=False,
             background_normal='',
@@ -317,14 +317,15 @@ class ServerSelectionScreen(Screen):
         popup.open()
 
 
-# Statistics Screen (with "Calculate Speed" button)
 class StatisticsScreen(Screen):
     def __init__(self, vpn_client, **kwargs):
         super(StatisticsScreen, self).__init__(**kwargs)
         self.vpn_client = vpn_client
 
-        layout = ModernWidget(orientation="vertical", padding=20, spacing=10)
+        # Main layout
+        layout = BoxLayout(orientation="vertical", padding=20, spacing=10)
 
+        # Title
         title = Label(
             text="Connection Statistics",
             font_size=24,
@@ -336,17 +337,17 @@ class StatisticsScreen(Screen):
         title.bind(size=title.setter('text_size'))
         layout.add_widget(title)
 
-        # A label to display stats or speed
+        # Label to display the live stats
         self.stats_label = Label(
-            text="(Statistics will be displayed here...)",
+            text="(Statistics or status will be displayed here...)",
             font_size=16,
             color=TEXT_COLOR
         )
         layout.add_widget(self.stats_label)
 
-        # Button to calculate speed (manual trigger)
-        speed_button = Button(
-            text="Calculate Speed",
+        # Button to Disconnect & Close the app
+        shutdown_button = Button(
+            text="Disconnect & Close",
             font_size=16,
             size_hint=(1, 0.07),
             background_normal='',
@@ -354,8 +355,8 @@ class StatisticsScreen(Screen):
             color=TEXT_COLOR,
             bold=True
         )
-        speed_button.bind(on_press=self.calculate_speed)
-        layout.add_widget(speed_button)
+        shutdown_button.bind(on_press=self.disconnect_and_close)
+        layout.add_widget(shutdown_button)
 
         # Back Button
         back_button = Button(
@@ -372,29 +373,37 @@ class StatisticsScreen(Screen):
 
         self.add_widget(layout)
 
-        # Schedule periodic updates
-        Clock.schedule_interval(self.update_speed, 1)  # Update every second
+        # Schedule periodic stats updates every second
+        Clock.schedule_interval(self.update_speed, 1)
 
-    def calculate_speed(self, instance):
+    def update_speed(self, dt):
+        """Continuously update statistics or speed info."""
         try:
-            speed = self.vpn_client.calculate_speed()  # Make sure this method exists in your vpn_client
-            self.stats_label.text = f"Speed: {speed}"
-        except Exception as e:
-            self.stats_label.text = f"Error calculating speed:\n{e}"
-
-    def update_speed(self,dt):
-        try:
+            # Example calls to your VPN client for updated stats
             self.vpn_client.update(0)
-            speed = self.vpn_client.calculate_speed()  # Replace with real-time speed logic
+            speed = self.vpn_client.calculate_speed()
+            # Display live speed or any other stats on the label
             self.stats_label.text = f"Live Speed: {speed}"
-
         except Exception as e:
-            self.stats_label.text = f"Error updating speed:\n{e}"
+            self.stats_label.text = f"Error updating stats: {e}"
+
+    def disconnect_and_close(self, instance):
+        """
+        Disconnect the VPN and close the entire application.
+        """
+        try:
+            # Attempt to remove (disconnect) the VPN
+            self.vpn_client.remove_proxy()
+            print("VPN disconnected successfully.")
+        except Exception as e:
+            print(f"Error while disconnecting VPN: {e}")
+
+        # Close the Kivy app
+        App.get_running_app().stop()
 
     def back_to_selection(self, instance):
         self.manager.transition = SlideTransition(direction="right")
         self.manager.current = "server_selection"
-
 
 # Optional Home Screen
 class HomeScreen(Screen):
@@ -439,22 +448,24 @@ class HomeScreen(Screen):
 
 # Main App with ScreenManager
 class VPNClientApp(App):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.client= vpn_client.Client()
     def build(self):
         # Placeholder VPN client instance
-        client = vpn_client.Client()
 
         # ScreenManager with Slide Transition
         sm = ScreenManager(transition=SlideTransition())
 
         # Add Screens, passing the VPN client where needed
-        sm.add_widget(LoginScreen(name="login", vpn_client=client))
-        sm.add_widget(ServerSelectionScreen(name="server_selection", vpn_client=client))
-        sm.add_widget(StatisticsScreen(name="statistics_screen", vpn_client=client))
+        sm.add_widget(LoginScreen(name="login", vpn_client=self.client))
+        sm.add_widget(ServerSelectionScreen(name="server_selection", vpn_client=self.client))
+        sm.add_widget(StatisticsScreen(name="statistics_screen", vpn_client=self.client))
         sm.add_widget(HomeScreen(name="home"))
 
         # Example check if user is already logged in
         try:
-            is_logged_in = client.check_certificates()
+            is_logged_in = self.client.check_certificates()
             is_logged_in = False  # For demonstration purposes
             servers = ["0.0.0.0"]  # Placeholder
 
@@ -470,6 +481,16 @@ class VPNClientApp(App):
             sm.current = "login"
 
         return sm
+
+    def on_stop(self):
+        print("Application is closing. Running cleanup tasks...")
+
+        # Example: Disconnect VPN before exit
+        try:
+            self.client.remove_proxy()
+            print("VPN disconnected successfully.")
+        except Exception as e:
+            print(f"Error while disconnecting VPN: {e}")
 
 
 if __name__ == "__main__":

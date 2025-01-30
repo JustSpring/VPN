@@ -99,11 +99,11 @@ class Server:
             try:
                 connection, client_address = self.socket.accept()
                 logging.info(f"Standard Server got a connection from {client_address}")
-                add_logging(str(client_address), "connected to VPN")
+                # name = active_users.get_name_by_ip(client_address[0])
 
                 # Wrap the connection in TLS using the main VPN context
                 secure_socket = self.context.wrap_socket(connection, server_side=True)
-                threading.Thread(target=tunnel.tunnel, args=(secure_socket,client_address[0],), daemon=True).start()
+                threading.Thread(target=tunnel.tunnel, args=(secure_socket,client_address,), daemon=True).start()
 
             except Exception as e:
                 logging.error(f"Error accepting standard client: {e}")
@@ -124,38 +124,46 @@ class Server:
                 logging.info(f"Authentication Server got a connection from {client_address}")
 
                 secure_socket = self.cert_context.wrap_socket(connection, server_side=True)
-                threading.Thread(target=auth_handler.transfer_cert, args=(secure_socket,), daemon=True).start()
+                threading.Thread(target=auth_handler.transfer_cert, args=(secure_socket,client_address,), daemon=True).start()
+
+                # TODO Make one file no need for auth_handler.py and no need fot thread
             except Exception as e:
                 logging.error(f"Error accepting Authentication client: {e}")
                 # (Optional) break if you want to exit on error
                 # break
 
     def receive_clients_control(self):
-        # Control server
-        self.socket_control.listen(5)
-        logging.info("Control Server is listening for connections.")
-        try:
-            connection, client_address = self.socket_control.accept()
-            logging.info(f"Control Server got a connection from {client_address}")
+        while True:
+            # Control server
+            self.socket_control.listen(5)
+            logging.info("Control Server is listening for connections.")
+            try:
+                connection, client_address = self.socket_control.accept()
+                logging.info(f"Control Server got a connection from {client_address}")
 
-            # Wrap the socket in TLS using the control context
-            secure_socket = self.control_context.wrap_socket(connection, server_side=True)
-            # print(secure_socket.getpeercert())
-            cert_der = secure_socket.getpeercert(binary_form=True)
-            # Parse the DER-formatted certificate
-            cert = x509.load_der_x509_certificate(cert_der)
-            # Extract the serial number
-            serial_number = cert.serial_number
-            username=users_table.get_username(serial_number)
-            active_users.add_user(username,client_address[0])
-            threading.Thread(
-                target=handle_control_client,
-                args=(self, secure_socket, client_address,username),
-                daemon=True
-            ).start()
+                # Wrap the socket in TLS using the control context
+                secure_socket = self.control_context.wrap_socket(connection, server_side=True)
 
-        except Exception as e:
-            logging.error(f"Error accepting control client: {e}")
+                cipher = secure_socket.cipher()
+                logging.info(f"TLS Cipher Suite Used: {cipher[0]}, Protocol: {cipher[1]}, Key Bits: {cipher[2]}")
+                # print(secure_socket.getpeercert())
+                cert_der = secure_socket.getpeercert(binary_form=True)
+                # Parse the DER-formatted certificate
+                cert = x509.load_der_x509_certificate(cert_der)
+                # Extract the serial number
+                serial_number = cert.serial_number
+                username=users_table.get_username(serial_number)
+                active_users.add_user(username,client_address[0],str(serial_number))
+                # name = active_users.get_name_by_ip(client_address[0])
+                add_logging(username, "connected to Control Server")
+                threading.Thread(
+                    target=handle_control_client,
+                    args=(self, secure_socket, client_address,username),
+                    daemon=True
+                ).start()
+
+            except Exception as e:
+                logging.error(f"Error accepting control client: {e}")
 
 
     def find_all_proxy(self):
