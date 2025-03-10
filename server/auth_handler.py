@@ -27,7 +27,7 @@ def transfer_cert(socket,client_address):
             cert_data = create_all_keys()
             update_cert_serial(username,cert_data[2])
             print(f"cert is {cert_data[2]}")
-            socket.send(pickle.dumps(cert_data[:2]))
+            socket.send(pickle.dumps(cert_data))
     except Exception as e:
         logging.error(f"Error in transfer_cert: {e}")
         socket.close()
