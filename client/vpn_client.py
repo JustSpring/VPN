@@ -48,6 +48,7 @@ class Client:
         self.local_channel_map={}
         self.send_lock = threading.Lock()
         self.serial=None
+        self.kill=False
     def create_initial_certificates(self):
         logger.info("Generating initial client certificates.")
         client_private_key = rsa.generate_private_key(
@@ -471,8 +472,8 @@ class Client:
                     response = pickle.loads(data)
                     self.proxy_list=response
                 except Exception:
-                    print("Error")
-
+                    self.remove_proxy()
+                    self.kill=True
                 data = self.control_socket.recv(BUFFER_SIZE)
 
         except Exception as e:

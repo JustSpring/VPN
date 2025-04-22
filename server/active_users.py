@@ -32,15 +32,17 @@ def initialize_database():
 
 
 def delete_table():
-
     with sqlite3.connect("active_users.db") as con:
         cur = con.cursor()
         cur.execute("""
             DROP TABLE IF EXISTS active
         """)
-        # If you also want to drop 'ports', uncomment:
-        # cur.execute("""DROP TABLE ports""")
+        cur.execute("""
+                    DROP TABLE IF EXISTS ports
+                """)
+
         con.commit()
+
 
 
 def add_user(username, ip, cert,proxy=None):
@@ -109,7 +111,18 @@ def delete_user(username):
             logging.info(f"User {username} deleted from active users.")
     except sqlite3.OperationalError as e:
         logging.error(f"Error deleting user {username}: {e}")
-
+def delete_user_by_ip(ip):
+    try:
+        with sqlite3.connect("active_users.db") as con:
+            cur = con.cursor()
+            cur.execute("""
+                DELETE FROM active
+                WHERE ip = ?
+            """, (ip,))
+            con.commit()
+            logging.info(f"User {ip} deleted from active users.")
+    except sqlite3.OperationalError as e:
+        logging.error(f"Error deleting user {ip}: {e}")
 
 def get_proxy_by_ip(ip):
 
@@ -194,6 +207,10 @@ def get_name_by_cert(cert):
         logging.error(f"Error retrieving proxy for cert {cert}: {e}")
         return None
 
+def recreate_table():
+    delete_table()
+    initialize_database()
+
 # ---------------------------
 #  Ports table-specific code
 # ---------------------------
@@ -236,7 +253,7 @@ def get_name_by_port(port):
 
 if __name__ == "__main__":
     # Example usage:
-    delete_table()  # If you want to drop the old 'active' table
+    delete_table()
     initialize_database()
 
     # add_user("alice", "1.2.3.4", "proxyA")

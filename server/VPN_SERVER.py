@@ -3,6 +3,8 @@ import socket
 import threading
 import sys
 import os
+from math import trunc
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from shared.config import Addreses
 import auth_handler
@@ -14,7 +16,6 @@ from cryptography import x509
 import active_users
 import users_table
 # >>> Import the new file <<<
-from control_handler import handle_control_client
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 BUFFER_SIZE=65536
@@ -28,7 +29,8 @@ class Server:
         self.cert_context = None
         self.control_context = None
         self.proxy_list = []
-        # Optional: If you want to do on-the-fly shutdown
+        self.clients_socket={}
+        active_users.recreate_table()
         # self.request_shutdown = False
 
     def create_ssl_context(self):
@@ -109,6 +111,7 @@ class Server:
 
             except Exception as e:
                 logging.error(f"Error accepting standard client: {e}")
+                # self.active_amount-=1
                 # (Optional) break if you want to exit on error
                 # break
 
@@ -145,7 +148,7 @@ class Server:
 
                 # Wrap the socket in TLS using the control context
                 secure_socket = self.control_context.wrap_socket(connection, server_side=True)
-
+                self.clients_socket[client_address[0]]=secure_socket
                 cipher = secure_socket.cipher()
                 logging.info(f"TLS Cipher Suite Used: {cipher[0]}, Protocol: {cipher[1]}, Key Bits: {cipher[2]}")
                 # print(secure_socket.getpeercert())
@@ -159,14 +162,60 @@ class Server:
                 # name = active_users.get_name_by_ip(client_address[0])
                 add_logging(username, "connected to Control Server")
                 threading.Thread(
-                    target=handle_control_client,
-                    args=(self, secure_socket, client_address,username),
+                    target=self.handle_control_client,
+                    args=(self,secure_socket, client_address,username),
                     daemon=True
                 ).start()
 
             except Exception as e:
                 logging.error(f"Error accepting control client: {e}")
 
+    def handle_control_client(self, server, secure_socket, client_address,username):
+        """
+        Handles incoming commands on the server's control port.
+        'server' is the main server instance, so we can access server properties or methods.
+        """
+        logging.info(f"[CONTROL] Started control thread for {client_address}")
+
+        try:
+            while True:
+                data = secure_socket.recv(4096)
+                if not data:
+                    # Client closed the connection
+                    break
+
+                command = data.decode('utf-8', errors='ignore').strip()
+                logging.info(f"[CONTROL] Received command from {client_address}: {command}")
+
+                # Example 1: SHUTDOWN
+                if command.upper() == "SHUTDOWN":
+                    response = "Server will shut down soon...\n"
+                    secure_socket.sendall(response.encode())
+                    # (Optional) Add any actual shutdown logic you want here, e.g.:
+                    # server.request_shutdown = True
+                    # or server.stop_all_threads()
+                    break
+
+                elif command.upper() == "LIST_PROXIES":
+                    print(f'Sent to {client_address} {server.proxy_list}')
+                    secure_socket.sendall(pickle.dumps(server.proxy_list))
+
+                elif command.startswith("CHOOSE_PROXY"):
+                    active_users.update_proxy(username, command.split()[1])
+                    # response = "Hello from the control server!\n"
+                    # secure_socket.sendall(response.encode())
+
+                else:
+                    response = f"Unknown command: {command}\n"
+                    secure_socket.sendall(response.encode())
+
+        except Exception as e:
+            logging.error(f"[CONTROL] Error in control client thread: {e}")
+        finally:
+            secure_socket.close()
+            logging.info(f"[CONTROL] Control client {client_address} disconnected.")
+            active_users.delete_user_by_ip(client_address[0])
+            # self.active_amount-=1
 
     def find_all_proxy(self):
         self.proxy_list = []
@@ -177,6 +226,7 @@ class Server:
             if self.check_socket_open(ip,Addreses.SERVER_PROXY_PORT):
                 self.proxy_list.append(ip)
         logging.info(f"detected the following proxies: {self.proxy_list}")
+        return self.proxy_list
 
     def check_socket_open(self,ip, port):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -232,18 +282,39 @@ class Server:
         #     client_socket.close()
         #     logging.info("Tunnel closed.")
 
-    def forward(self,source, destination):
+    def forward(self, source: socket.socket, destination: socket.socket):
         try:
             while True:
                 data = source.recv(BUFFER_SIZE)
                 if not data:
-                    sock.close()
-                    if channel_id in channel_map:  # Ensure deletion only happens when key exists
-                        del channel_map[channel_id]
-                    continue
+                    # clean shutdown of this direction
+                    source.shutdown(socket.SHUT_RD)
+                    break
                 destination.sendall(data)
         except Exception as e:
             logging.error(f"Error forwarding data: {e}")
+        finally:
+            try:
+                source.close()
+            except:
+                pass
+            try:
+                destination.close()
+            except:
+                pass
+
+    def kick(self,ip):
+        sock=self.clients_socket.pop(ip)
+        if not sock:
+            return False
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+            sock.close()
+            logging.info(f"Kicked user with ip:{ip}")
+            active_users.delete_user_by_ip(ip)
+        except Exception as E:
+            logging.error(f"Error kicking {ip} from VPN_SERVER.py: {E}")
+        return True
 
 if __name__ == "__main__":
     server = Server()
