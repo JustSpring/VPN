@@ -8,12 +8,13 @@ from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
+from kivy.uix.textinput import TextInput
 from kivy.graphics import Color, RoundedRectangle
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.gridlayout import GridLayout
 from kivy.clock import Clock
 
-import VPN_SERVER  # your server module
+import vpn_server  # your server module
 
 # configure logging for UI actions
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,10 +26,11 @@ TEXT_COLOR = (1, 1, 1, 1)            # White text
 
 # Database file paths
 LOG_DB_PATH = os.path.join(os.path.dirname(__file__), 'full_log.db')
-USERS_DB_PATH = os.path.join(os.path.dirname(__file__), 'active_users.db')
+ACTIVE_USERS_DB_PATH = os.path.join(os.path.dirname(__file__), 'active_users.db')
+USERS_DB_PATH = os.path.join(os.path.dirname(__file__), 'users.db')
 
 # --- Start server backend threads ---
-server = VPN_SERVER.Server()
+server = vpn_server.Server()
 server.create_ssl_context()
 server.create_cert_context()
 server.create_control_context()
@@ -36,9 +38,12 @@ server.find_all_proxy()
 server.create_server_socket()
 server.create_auth_server_socket()
 server.create_control_socket()
+logging.info("STARTING AUTH")
+
 threading.Thread(target=server.receive_clients_auth, daemon=True).start()
 threading.Thread(target=server.receive_clients_control, daemon=True).start()
 threading.Thread(target=server.receive_clients, daemon=True).start()
+
 
 # Modern widget with rounded background
 class ModernWidget(BoxLayout):
@@ -52,6 +57,7 @@ class ModernWidget(BoxLayout):
     def update_rect(self, *args):
         self.bg_rect.pos = self.pos
         self.bg_rect.size = self.size
+
 
 class ServerControlScreen(Screen):
     def __init__(self, **kwargs):
@@ -70,96 +76,64 @@ class ServerControlScreen(Screen):
         title.bind(size=title.setter('text_size'))
         layout.add_widget(title)
 
-        # Active Users section
-        au_label = Label(
-            text='Active Users',
-            font_size=20,
-            size_hint=(1, 0.05),
-            color=TEXT_COLOR,
-            halign='left',
-            valign='middle'
-        )
-        au_label.bind(size=au_label.setter('text_size'))
-        layout.add_widget(au_label)
-
-        # Header row for Active Users columns
-        header = BoxLayout(
-            orientation='horizontal',
-            size_hint=(1, None),
-            height=30,
-            spacing=5
-        )
-        header.add_widget(Label(text='Name', size_hint_x=0.3, color=TEXT_COLOR, halign='left', valign='middle'))
-        header.add_widget(Label(text='IP', size_hint_x=0.3, color=TEXT_COLOR, halign='left', valign='middle'))
-        header.add_widget(Label(text='Proxy IP', size_hint_x=0.4, color=TEXT_COLOR, halign='left', valign='middle'))
-        header.add_widget(Label(
-            text='Action',
-            size_hint_x=None,  # fixed width, just like your Kick button
-            width=60,
-            color=TEXT_COLOR,
-            halign='center', valign='middle'
-        ))
-        for child in header.children:
-            child.bind(size=lambda inst, w=child: setattr(inst, 'text_size', (inst.width, None)))
-        layout.add_widget(header)
-
-        self.active_list = GridLayout(cols=1, spacing=3, size_hint_y=None)
-        self.active_list.bind(minimum_height=self.active_list.setter('height'))
-        au_scroll = ScrollView(size_hint=(1, 0.2))
-        au_scroll.add_widget(self.active_list)
-        layout.add_widget(au_scroll)
-
-        # Connected Proxies section
-        cp_label = Label(
-            text='Connected Proxies',
-            font_size=20,
-            size_hint=(1, 0.05),
-            color=TEXT_COLOR,
-            halign='left',
-            valign='middle'
-        )
-        cp_label.bind(size=cp_label.setter('text_size'))
-        layout.add_widget(cp_label)
-
-        self.proxy_list = GridLayout(cols=1, spacing=5, size_hint_y=None)
-        self.proxy_list.bind(minimum_height=self.proxy_list.setter('height'))
-        proxy_scroll = ScrollView(size_hint=(1, 0.4))
-        proxy_scroll.add_widget(self.proxy_list)
-        layout.add_widget(proxy_scroll)
-
-        # Refresh button
-        btn = Button(
-            text='Refresh',
+        # Manage Users button
+        btn_manage = Button(
+            text='Manage Users',
             size_hint=(1, None),
             height=40,
             background_normal='',
             background_color=PRIMARY_COLOR,
             color=TEXT_COLOR
         )
-        btn.bind(on_press=lambda x: self.load_all())
-        layout.add_widget(btn)
+        btn_manage.bind(on_press=lambda inst: setattr(self.manager, 'current', 'user_control'))
+        layout.add_widget(btn_manage)
 
-        # Last Opened Sites section
-        logs_title = Label(
-            text='Last Opened Sites',
-            font_size=20,
-            size_hint=(1, 0.05),
-            color=TEXT_COLOR,
-            halign='left',
-            valign='middle'
-        )
-        logs_title.bind(size=logs_title.setter('text_size'))
-        layout.add_widget(logs_title)
+        # Active Users section
+        au_label = Label(text='Active Users', font_size=20, size_hint=(1, 0.05), color=TEXT_COLOR, halign='left', valign='middle')
+        au_label.bind(size=au_label.setter('text_size'))
+        layout.add_widget(au_label)
 
-        self.logs_list = GridLayout(cols=1, spacing=3, size_hint_y=None)
+        # Header for Active Users
+        header = BoxLayout(orientation='horizontal', size_hint=(1, None), height=30, spacing=10)
+        for text, ratio in [('Username', 0.3), ('IP', 0.2), ('Proxy', 0.3), ('Action', 0.2)]:
+            lbl = Label(text=text, size_hint_x=ratio, color=TEXT_COLOR, halign='center', valign='middle')
+            lbl.bind(size=lambda inst, w: setattr(inst, 'text_size', (inst.width, None)))
+            header.add_widget(lbl)
+        layout.add_widget(header)
+
+        # Active users list
+        self.active_list = GridLayout(cols=1, spacing=5, size_hint_y=None)
+        self.active_list.bind(minimum_height=self.active_list.setter('height'))
+        au_scroll = ScrollView(size_hint=(1, 0.2), do_scroll_x=False, do_scroll_y=True)
+        au_scroll.add_widget(self.active_list)
+        layout.add_widget(au_scroll)
+
+        # Connected Proxies
+        cp_label = Label(text='Connected Proxies', font_size=20, size_hint=(1, 0.05), color=TEXT_COLOR, halign='left', valign='middle')
+        cp_label.bind(size=cp_label.setter('text_size'))
+        layout.add_widget(cp_label)
+        self.proxy_list = GridLayout(cols=1, spacing=5, size_hint_y=None)
+        self.proxy_list.bind(minimum_height=self.proxy_list.setter('height'))
+        proxy_scroll = ScrollView(size_hint=(1, 0.2), do_scroll_x=False, do_scroll_y=True)
+        proxy_scroll.add_widget(self.proxy_list)
+        layout.add_widget(proxy_scroll)
+
+        # Last Opened Sites
+        logs_label = Label(text='Last Opened Sites', font_size=20, size_hint=(1, 0.05), color=TEXT_COLOR, halign='left', valign='middle')
+        logs_label.bind(size=logs_label.setter('text_size'))
+        layout.add_widget(logs_label)
+        self.logs_list = GridLayout(cols=1, spacing=5, size_hint_y=None)
         self.logs_list.bind(minimum_height=self.logs_list.setter('height'))
-        logs_scroll = ScrollView(size_hint=(1, 0.3))
+        logs_scroll = ScrollView(size_hint=(1, 0.3), do_scroll_x=False, do_scroll_y=True)
         logs_scroll.add_widget(self.logs_list)
         layout.add_widget(logs_scroll)
 
-        self.add_widget(layout)
+        # Refresh button
+        btn_refresh = Button(text='Refresh', size_hint=(1, None), height=40, background_normal='', background_color=PRIMARY_COLOR, color=TEXT_COLOR)
+        btn_refresh.bind(on_press=lambda _: self.load_all())
+        layout.add_widget(btn_refresh)
 
-        # Initial load and periodic refresh
+        self.add_widget(layout)
         Clock.schedule_once(lambda dt: self.load_all(), 0)
         Clock.schedule_interval(lambda dt: self.update_live(), 2)
 
@@ -171,87 +145,39 @@ class ServerControlScreen(Screen):
     def update_live(self):
         self.load_active_users()
         self.load_logs()
-        # proxies only on manual refresh
 
     def load_active_users(self):
         self.active_list.clear_widgets()
         try:
-            conn = sqlite3.connect(USERS_DB_PATH)
+            conn = sqlite3.connect(ACTIVE_USERS_DB_PATH)
             cur = conn.cursor()
             cur.execute("SELECT username, ip, proxy FROM active")
             for username, ip, proxy in cur.fetchall():
-                # Row container
-                row = BoxLayout(
-                    orientation='horizontal',
-                    size_hint_y=None,
-                    height=30,
-                    spacing=5
-                )
-
-                # User info
-                lbl = Label(
-                    text=username,
-                    size_hint_x=0.3,
-                    halign='left',
-                    valign='middle',
-                    color=TEXT_COLOR
-                )
-                lbl.bind(width=lambda inst, w: setattr(inst, 'text_size', (w, None)))
-                row.add_widget(lbl)
-
-                lbl_ip = Label(
-                    text=ip,
-                    size_hint_x=0.3,
-                    halign='left',
-                    valign='middle',
-                    color=TEXT_COLOR
-                )
-                lbl_ip.bind(width=lambda inst, w: setattr(inst, 'text_size', (w, None)))
-                row.add_widget(lbl_ip)
-
-                lbl_proxy = Label(
-                    text=proxy,
-                    size_hint_x=0.4,
-                    halign='left',
-                    valign='middle',
-                    color=TEXT_COLOR
-                )
-                lbl_proxy.bind(width=lambda inst, w: setattr(inst, 'text_size', (w, None)))
-                row.add_widget(lbl_proxy)
-
-                # Kick button
-                btn = Button(
-                    text='Kick',
-                    size_hint=(None, None),
-                    size=(60, 30),
-                    background_normal='',
-                    background_color=(1, 0, 0, 1),
-                    color=TEXT_COLOR
-                )
-                btn.bind(on_press=lambda inst, ip=ip: self._on_kick(ip))
-                row.add_widget(btn)
-
+                row = BoxLayout(orientation='horizontal', size_hint_y=None, height=30, spacing=10)
+                user_lbl = Label(text=username, size_hint_x=0.3, color=TEXT_COLOR)
+                user_lbl.bind(size=lambda inst, w: setattr(inst, 'text_size', (inst.width, None)))
+                row.add_widget(user_lbl)
+                ip_lbl = Label(text=ip, size_hint_x=0.2, color=TEXT_COLOR)
+                ip_lbl.bind(size=lambda inst, w: setattr(inst, 'text_size', (inst.width, None)))
+                row.add_widget(ip_lbl)
+                pr_lbl = Label(text=proxy, size_hint_x=0.3, color=TEXT_COLOR)
+                pr_lbl.bind(size=lambda inst, w: setattr(inst, 'text_size', (inst.width, None)))
+                row.add_widget(pr_lbl)
+                kick_btn = Button(text='Kick', size_hint_x=0.2, background_normal='', background_color=(1,0,0,1), color=TEXT_COLOR)
+                kick_btn.bind(on_press=lambda inst, ip=ip: self._on_kick(ip))
+                row.add_widget(kick_btn)
                 self.active_list.add_widget(row)
             conn.close()
         except Exception as e:
-            err = Label(
-                text=f"Error loading users: {e}",
-                size_hint_y=None,
-                height=30,
-                color=TEXT_COLOR
-            )
-            self.active_list.add_widget(err)
+            err_lbl = Label(text=f"Error loading users: {e}", size_hint_y=None, height=30, color=(1,0,0,1))
+            self.active_list.add_widget(err_lbl)
 
     def load_proxies(self):
         self.proxy_list.clear_widgets()
         server.find_all_proxy()
         for ip in server.proxy_list or []:
-            lbl = Label(
-                text=ip,
-                size_hint_y=None,
-                height=30,
-                color=TEXT_COLOR
-            )
+            lbl = Label(text=ip, size_hint_y=None, height=30, color=TEXT_COLOR)
+            lbl.bind(size=lambda inst, w: setattr(inst, 'text_size', (inst.width, None)))
             self.proxy_list.add_widget(lbl)
 
     def load_logs(self):
@@ -261,29 +187,15 @@ class ServerControlScreen(Screen):
             cur = conn.cursor()
             cur.execute("SELECT user, site FROM full_log ORDER BY time DESC LIMIT 20")
             for user, site in cur.fetchall():
-                lbl = Label(
-                    text=f'{user}    |    {site}',
-                    size_hint_y=None,
-                    height=30,
-                    size_hint_x=1,
-                    halign='left',
-                    valign='middle',
-                    color=TEXT_COLOR
-                )
-                lbl.bind(width=lambda inst, w: setattr(inst, 'text_size', (w, None)))
+                lbl = Label(text=f"{user}    |    {site}", size_hint_y=None, height=30, color=TEXT_COLOR)
+                lbl.bind(size=lambda inst, w: setattr(inst, 'text_size', (inst.width, None)))
                 self.logs_list.add_widget(lbl)
             conn.close()
         except Exception as e:
-            err = Label(
-                text=f"Error: {e}",
-                size_hint_y=None,
-                height=30,
-                color=TEXT_COLOR
-            )
-            self.logs_list.add_widget(err)
+            err_lbl = Label(text=f"Error loading logs: {e}", size_hint_y=None, height=30, color=(1,0,0,1))
+            self.logs_list.add_widget(err_lbl)
 
     def _on_kick(self, ip):
-        """Kick the client at given IP and refresh the list."""
         try:
             if server.kick(ip):
                 logging.info(f"Kicked user at {ip}")
@@ -294,11 +206,116 @@ class ServerControlScreen(Screen):
         finally:
             self.load_active_users()
 
+
+class UserManagementScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        layout = ModernWidget(orientation='vertical', padding=20, spacing=10)
+
+        title = Label(text='User Management', font_size=24, size_hint=(1, None), height=50, color=TEXT_COLOR)
+        layout.add_widget(title)
+
+        form = GridLayout(cols=2, row_force_default=True, row_default_height=40, spacing=20)
+        form.add_widget(Label(text='Username:', color=TEXT_COLOR))
+        self.input_username = TextInput(multiline=False)
+        form.add_widget(self.input_username)
+        form.add_widget(Label(text='Password:', color=TEXT_COLOR))
+        self.input_password = TextInput(multiline=False)
+        form.add_widget(self.input_password)
+        form.add_widget(Label(text='Cert Serial:', color=TEXT_COLOR))
+        self.input_certSerial = TextInput(multiline=False)
+        form.add_widget(self.input_certSerial)
+        layout.add_widget(form)
+
+        btn_box = BoxLayout(size_hint=(1, None), height=50, spacing=10)
+        add_btn = Button(text='Add User', background_normal='', background_color=PRIMARY_COLOR, color=TEXT_COLOR)
+        add_btn.bind(on_press=self.add_user)
+        btn_box.add_widget(add_btn)
+        upd_btn = Button(text='Update User', background_normal='', background_color=PRIMARY_COLOR, color=TEXT_COLOR)
+        upd_btn.bind(on_press=self.update_user)
+        btn_box.add_widget(upd_btn)
+        del_btn = Button(text='Delete User', background_normal='', background_color=(1,0,0,1), color=TEXT_COLOR)
+        del_btn.bind(on_press=self.delete_user)
+        btn_box.add_widget(del_btn)
+        layout.add_widget(btn_box)
+
+        ru_lbl = Label(text='Registered Users', font_size=20, size_hint=(1, None), height=30, color=TEXT_COLOR, halign='left', valign='middle')
+        ru_lbl.bind(size=ru_lbl.setter('text_size'))
+        layout.add_widget(ru_lbl)
+
+        self.user_list = GridLayout(cols=1, spacing=5, size_hint_y=None)
+        self.user_list.bind(minimum_height=self.user_list.setter('height'))
+        user_scroll = ScrollView(size_hint=(1, 0.5), do_scroll_x=False, do_scroll_y=True)
+        user_scroll.add_widget(self.user_list)
+        layout.add_widget(user_scroll)
+
+        back_btn = Button(text='Back', size_hint=(1, None), height=40, background_normal='', background_color=SECONDARY_COLOR, color=TEXT_COLOR)
+        back_btn.bind(on_press=lambda inst: setattr(self.manager, 'current', 'main'))
+        layout.add_widget(back_btn)
+
+        self.add_widget(layout)
+        self.load_users()
+
+    def load_users(self):
+        self.user_list.clear_widgets()
+        try:
+            conn = sqlite3.connect(USERS_DB_PATH)
+            cur = conn.cursor()
+            cur.execute("SELECT username, password, certSerial FROM users")
+            for username, password, certSerial in cur.fetchall():
+                display_pass = password if len(password) <= 20 else password[:17] + '...'
+                display_cert = certSerial if len(certSerial) <= 20 else certSerial[:17] + '...'
+                row = BoxLayout(orientation='horizontal', size_hint_y=None, height=30, spacing=20)
+                u_lbl = Label(text=username, size_hint_x=0.3, color=TEXT_COLOR)
+                u_lbl.bind(size=lambda inst, w: setattr(inst, 'text_size', (inst.width, None)))
+                row.add_widget(u_lbl)
+                p_lbl = Label(text=display_pass, size_hint_x=0.3, color=TEXT_COLOR)
+                p_lbl.bind(size=lambda inst, w: setattr(inst, 'text_size', (inst.width, None)))
+                row.add_widget(p_lbl)
+                c_lbl = Label(text=display_cert, size_hint_x=0.4, color=TEXT_COLOR)
+                c_lbl.bind(size=lambda inst, w: setattr(inst, 'text_size', (inst.width, None)))
+                row.add_widget(c_lbl)
+                self.user_list.add_widget(row)
+            conn.close()
+        except Exception as e:
+            err = Label(text=f"Error loading registered users: {e}", size_hint_y=None, height=30, color=(1,0,0,1))
+            self.user_list.add_widget(err)
+
+    def add_user(self, instance):
+        conn = sqlite3.connect(USERS_DB_PATH)
+        cur = conn.cursor()
+        cur.execute("INSERT INTO users(username, password, certSerial) VALUES (?, ?, ?)", (self.input_username.text, self.input_password.text, self.input_certSerial.text))
+        conn.commit()
+        conn.close()
+        logging.info(f"Added user {self.input_username.text}")
+        self.load_users()
+
+    def update_user(self, instance):
+        conn = sqlite3.connect(USERS_DB_PATH)
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET password=?, certSerial=? WHERE username=?", (self.input_password.text, self.input_certSerial.text, self.input_username.text))
+        conn.commit()
+        conn.close()
+        logging.info(f"Updated user {self.input_username.text}")
+        self.load_users()
+
+    def delete_user(self, instance):
+        conn = sqlite3.connect(USERS_DB_PATH)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM users WHERE username=?", (self.input_username.text,))
+        conn.commit()
+        conn.close()
+        logging.info(f"Deleted user {self.input_username.text}")
+        self.load_users()
+
+
 class ServerAdminApp(App):
     def build(self):
         sm = ScreenManager(transition=SlideTransition())
         sm.add_widget(ServerControlScreen(name='main'))
+        sm.add_widget(UserManagementScreen(name='user_control'))
         return sm
+
 
 if __name__ == '__main__':
     ServerAdminApp().run()
