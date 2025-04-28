@@ -1,21 +1,34 @@
-# Custom VPN Solution (Work in Progress)
+# Custom VPN Solution
 ## Overview
-This project is a custom VPN (Virtual Private Network) solution developed using Python, with a focus on secure communication and encryption techniques. The VPN implements key features such as SSL/TLS for secure communication, user authentication with multi-factor security (username/password, TOTP, and certificates), and machine-specific certificate generation. The solution is designed to provide secure, encrypted tunnels for data traffic while ensuring robust authentication and encryption.
+This project is a custom VPN (Virtual Private Network) solution developed in Python, focusing on secure communication and strong encryption.
+It features SSL/TLS encryption, multi-factor authentication (username/password, TOTP, and certificates), machine-specific certificates, and a full client and server UI for easy management.
+The VPN provides encrypted tunnels for traffic while ensuring robust security and flexible control for both users and administrators.
 ## Key Features
 * SSL/TLS Encryption: Secure communication between clients and servers.
-* Multi-Factor Authentication: Combines username/password, TOTP, and certificates for robust security.
-* Machine-Specific Certificates: Ensures that only authenticated devices can connect.
-* FTP Support: Added functionality for handling FTP traffic securely.
-* Client-Side UI: A user-friendly interface that allows clients to easily configure and manage their VPN connection.
-* Server Selection: Clients can choose which server to connect to, providing flexibility for optimized performance or regional access.
-* Real-Time Speed Monitoring: Users can now see the speed of data transfer in real time.
-* Automatic Registry Modification: The VPN automatically updates the system registry to redirect traffic through the local proxy IP and restores the original settings when the connection ends.
-## Planned Features
-* Multi-Protocol Support: Expanding the local proxy to support a variety of protocols beyond HTTP/S, including DNS and more.
-* Multi-Hop Routing: Future versions will allow users to route their traffic through multiple VPN servers, increasing anonymity and security.
-* Advanced Encryption: Additional encryption protocols and customization options to enhance security and flexibility.
-* Traffic Shaping and Monitoring: Features for monitoring and shaping network traffic to adapt for various use cases (e.g., gaming, streaming, secure communication).
-* Kill Switch: Ensures that if the VPN connection is interrupted, all network traffic is blocked to prevent data leaks.
-* Remote Access Support: The VPN will be accessible from computers outside the local network via the internet.
+* Multi-Factor Authentication: Combines username/password, TOTP (Time-Based One-Time Password), and certificates for strong protection.
+* Machine-Specific Certificates: Only authenticated devices can connect to the VPN.
+* FTP Support: Securely handles FTP traffic alongside HTTP/S traffic.
+* Client-Side UI: A user-friendly interface for configuring and managing VPN connections easily.
+* Server-Side UI: Manage users directly from the server (add, edit, and delete users; change usernames and passwords).
+* Server Selection: Clients can select the server they wish to connect to (for performance or regional access).
+* Real-Time Speed Monitoring: Displays upload and download speeds during VPN use.
+* Automatic Registry Modification: Updates system registry settings to redirect traffic through the VPN's local proxy, and restores original settings upon disconnection.
+
 ## Current Status
-The VPN solution is actively under development. The current version includes core functionalities such as secure connections, HTTP/S proxy support, FTP support, certificate-based authentication, and a UI for client-side management. Users can now select their desired server, adding flexibility to the VPN's operation. Additionally, real-time speed monitoring has been implemented, allowing users to track their data transfer speeds, and the VPN now automatically modifies the system registry to redirect traffic through the local proxy IP, restoring it to its original state upon disconnection. Advanced features like multi-hop routing, traffic shaping, and kill switch functionality are planned for future iterations.
+The VPN solution is fully functional and actively maintained.
+* Core features like secure HTTPS proxy, FTP support, multi-factor authentication, client-server communication, server selection, speed monitoring, and automatic registry redirection are already implemented.
+* The system is stable and user-friendly.
+
+## Screenshots
+
+### 📸 Client Side UI
+> *The client interface allows easy connection setup, server selection, real-time speed monitoring, and management of VPN settings.*
+![Client Side UI Screenshot1](https://github.com/user-attachments/assets/a7bb0ceb-177f-458c-9939-2b2d13aac44c)
+![Client Side UI Screenshot2](https://github.com/user-attachments/assets/f136bb25-3b18-49a1-82b2-d855d221f8eb)
+![Client Side UI Screenshot3](https://github.com/user-attachments/assets/af6bf85c-39e9-444f-99ae-3e1f1c66acbb)
+### 📸 Server Side UI
+> *The server interface provides user management capabilities, allowing administrators to add, edit, or delete users and manage authentication settings easily.*
+![Server Side UI Screenshot1](https://github.com/user-attachments/assets/8c57ff19-51d2-496b-b36d-37d081f2e6f3)
+![Server Side UI Screenshot2](https://github.com/user-attachments/assets/57632a15-0561-4318-8551-2498348fa3d7)
+
+
