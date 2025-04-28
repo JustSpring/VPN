@@ -23,11 +23,13 @@ The VPN solution is fully functional and actively maintained.
 
 ### 📸 Client Side UI
 > *The client interface allows easy connection setup, server selection, real-time speed monitoring, and management of VPN settings.*
+
 ![Client Side UI Screenshot1](https://github.com/user-attachments/assets/a7bb0ceb-177f-458c-9939-2b2d13aac44c)
 ![Client Side UI Screenshot2](https://github.com/user-attachments/assets/f136bb25-3b18-49a1-82b2-d855d221f8eb)
 ![Client Side UI Screenshot3](https://github.com/user-attachments/assets/af6bf85c-39e9-444f-99ae-3e1f1c66acbb)
 ### 📸 Server Side UI
 > *The server interface provides user management capabilities, allowing administrators to add, edit, or delete users and manage authentication settings easily.*
+
 ![Server Side UI Screenshot1](https://github.com/user-attachments/assets/8c57ff19-51d2-496b-b36d-37d081f2e6f3)
 ![Server Side UI Screenshot2](https://github.com/user-attachments/assets/57632a15-0561-4318-8551-2498348fa3d7)
 
