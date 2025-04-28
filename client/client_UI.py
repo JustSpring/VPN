@@ -66,7 +66,7 @@ class LoginScreen(Screen):
         input_container = BoxLayout(orientation="vertical", spacing=8, size_hint=(1, 0.55))
 
         self.ip_address = TextInput(
-            hint_text="Server IP Address", text="192.168.68.131",
+            hint_text="Server IP Address", text="192.168.68.129",
             font_size=16, multiline=False,
             background_normal='', background_color=(0.2,0.2,0.2,1),
             foreground_color=TEXT_COLOR, padding=(10,10),
