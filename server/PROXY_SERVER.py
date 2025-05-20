@@ -9,15 +9,14 @@ from urllib.parse import urlparse
 
 # add parent directory to path for shared imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from shared.config import Addreses
-import log_manager
-import active_users
+from shared.config import Addresses
+import manage_db
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 BUFFER_SIZE = 65536
 
 class Proxy:
-    def __init__(self, host=Addreses.SERVER_PROXY_IPS[0], port=Addreses.SERVER_PROXY_PORT):
+    def __init__(self, host=Addresses.SERVER_PROXY_IPS[0], port=Addresses.SERVER_PROXY_PORT):
         self.host = host
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -82,8 +81,8 @@ class Proxy:
 
                         # handle control headers
                         if header.get("type") == "CHANGE_NAME":
-                            name = active_users.get_name_by_cert(
-                                payload.decode('utf-8', errors='ignore')
+                            name = manage_db.get_active_name(
+                                cert=payload.decode('utf-8', errors='ignore')
                             )
                         elif header.get("type") == "OPEN_CHANNEL":
                             channel_map[cid] = {"socket": None, "host": None, "port": None, "protocol": None}
@@ -127,6 +126,9 @@ class Proxy:
                                     logging.error(f"Error sending to downstream ({cid}): {e}")
                                     entry["socket"].close()
                                     del channel_map[cid]
+                            if entry and entry["host"]:
+                                manage_db.add_full_logging(name, entry["host"], entry["port"],
+                                                             entry["protocol"])
                     else:
                         # data from remote host back to client
                         cid = next((k for k, v in channel_map.items() if v.get("socket") == sock), None)
