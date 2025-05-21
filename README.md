@@ -1,4 +1,4 @@
-# Custom VPN Solution (Work in Progress)
+# Custom VPN Solution
 ## Overview
 This project is a custom VPN (Virtual Private Network) solution developed using Python, with a focus on secure communication and encryption techniques. The VPN implements key features such as SSL/TLS for secure communication, user authentication with multi-factor security (username/password, TOTP, and certificates), and machine-specific certificate generation. The solution is designed to provide secure, encrypted tunnels for data traffic while ensuring robust authentication and encryption.
 ## Key Features
