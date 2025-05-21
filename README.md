@@ -1,21 +1,131 @@
-# Custom VPN Solution
+# SpringConnect- Custom VPN Solution
+
 ## Overview
-This project is a custom VPN (Virtual Private Network) solution developed using Python, with a focus on secure communication and encryption techniques. The VPN implements key features such as SSL/TLS for secure communication, user authentication with multi-factor security (username/password, TOTP, and certificates), and machine-specific certificate generation. The solution is designed to provide secure, encrypted tunnels for data traffic while ensuring robust authentication and encryption.
+This project is a **custom VPN (Virtual Private Network)** solution developed in **Python**, focusing on secure communication and proxy-based traffic redirection.
+
+Clients connect to the internet through **secure proxies** chosen from a list provided by the server. All communication is encrypted via **TLS 1.3**, and clients are authenticated using **multi-factor authentication** and **certificates**.
+
+---
+
 ## Key Features
-* SSL/TLS Encryption: Secure communication between clients and servers.
-* Multi-Factor Authentication: Combines username/password, TOTP, and certificates for robust security.
-* Machine-Specific Certificates: Ensures that only authenticated devices can connect.
-* FTP Support: Added functionality for handling FTP traffic securely.
-* Client-Side UI: A user-friendly interface that allows clients to easily configure and manage their VPN connection.
-* Server Selection: Clients can choose which server to connect to, providing flexibility for optimized performance or regional access.
-* Real-Time Speed Monitoring: Users can now see the speed of data transfer in real time.
-* Automatic Registry Modification: The VPN automatically updates the system registry to redirect traffic through the local proxy IP and restores the original settings when the connection ends.
-## Planned Features
-* Multi-Protocol Support: Expanding the local proxy to support a variety of protocols beyond HTTP/S, including DNS and more.
-* Multi-Hop Routing: Future versions will allow users to route their traffic through multiple VPN servers, increasing anonymity and security.
-* Advanced Encryption: Additional encryption protocols and customization options to enhance security and flexibility.
-* Traffic Shaping and Monitoring: Features for monitoring and shaping network traffic to adapt for various use cases (e.g., gaming, streaming, secure communication).
-* Kill Switch: Ensures that if the VPN connection is interrupted, all network traffic is blocked to prevent data leaks.
-* Remote Access Support: The VPN will be accessible from computers outside the local network via the internet.
-## Current Status
-The VPN solution is actively under development. The current version includes core functionalities such as secure connections, HTTP/S proxy support, FTP support, certificate-based authentication, and a UI for client-side management. Users can now select their desired server, adding flexibility to the VPN's operation. Additionally, real-time speed monitoring has been implemented, allowing users to track their data transfer speeds, and the VPN now automatically modifies the system registry to redirect traffic through the local proxy IP, restoring it to its original state upon disconnection. Advanced features like multi-hop routing, traffic shaping, and kill switch functionality are planned for future iterations.
+
+### Security
+- **TLS 1.3 Encryption** for all traffic between client and server
+- **Elliptic Curve Diffie-Hellman (ECDHE)** for key exchange
+- **AES-256 GCM** symmetric encryption with **HMAC-SHA-384**
+- **Mutual Certificate Authentication**: both client and server verify each other's certificate
+- **Multi-Factor Authentication**: Username + Password + TOTP (Time-Based One-Time Password)
+
+### Network Architecture
+- **Proxy-Based Routing**: traffic is tunneled through a proxy server selected by the client
+- **Client-Side Proxy Management**: local proxy runs on 127.0.0.1 and transparently redirects traffic
+- **Secure HTTP/S Support**
+
+### Client UI
+- Select desired proxy from available options
+- Real-time speed monitoring
+- Persistent certificates and authentication tokens
+- Simple graphical interface using Kivy
+
+### Server UI
+- View connected users and proxy servers
+- Add, update, or delete users
+- Force user disconnection (“kick”)
+- View proxy status and logs
+- Manage TOTP secrets and credentials
+
+---
+## Configuration & Prerequisites
+
+All components require **Python 3.8** to be installed.
+
+### Server
+**Required libraries:**  
+`kivy`, `pyotp`, `qrcode`, `keyring`, `cryptography`, `pillow`  
+Install with:
+```bash
+pip install kivy pyotp qrcode keyring cryptography pillow
+```
+### Client
+**Required libraries:**  
+`kivy`, `pyotp`, `cryptography`, `pyOpenSSL` 
+Install with:
+```bash
+pip install kivy pyotp cryptography pyopenssl
+```
+### Remote Proxy
+**Required libraries:**  
+`pyotp`, `keyring`
+Install with:
+```bash
+pip install pyotpkeyring
+```
+
+---
+
+## Security Notes
+
+- Encrypted traffic with authenticated peers
+- Secure key exchange (ECDHE)
+- Certificate pinning prevents MITM attacks
+- Only certificates signed by server are allowed
+
+---
+
+## Screenshots
+
+### Client UI
+Easy login with TOTP, proxy selection, and live speed stats  
+![Client UI1](https://github.com/user-attachments/assets/38f39a0f-9f2a-4978-83f5-243960a18821)
+![Client UI2](https://github.com/user-attachments/assets/d59745ca-2a5b-4913-8963-1ed4f1232bb8)
+![Client UI3](https://github.com/user-attachments/assets/6bb92572-9bd7-4cdc-90d5-a055a5089472)
+![Client UI4](https://github.com/user-attachments/assets/086c8f92-cea4-42b5-9299-1d73034758ca)
+
+### Server UI
+Full user and proxy management from an admin panel  
+![Server UI](https://github.com/user-attachments/assets/a90ae0db-8c7b-4b84-819d-658b69e6ba86)
+![Server UI](https://github.com/user-attachments/assets/11be1bf7-972f-448a-827f-52986532e9b0)
+
+---
+
+## Project Structure
+
+
+```text
+VPN/
+├── shared/
+│   ├── config.py
+│   └── logo.ico
+├── server/
+│   ├── active_users.db
+│   ├── create_keys.py
+│   ├── full_log.db
+│   ├── log.db
+│   ├── manage_db.py
+│   ├── proxy_server.py
+│   ├── server_UI.py
+│   ├── users.db
+│   ├── vpn_server.py
+│   └── certificates/
+│       ├── ca_cert.pem
+│       ├── ca_key.pem
+│       ├── server_cert.pem
+│       ├── server_key.pem
+│       └── client/
+│           ├── client_cert.pem
+│           ├── client_csr.pem
+│           └── client_key.pem
+└── client/
+    ├── client_UI.py
+    ├── vpn_client.py
+    └── certificates/
+        ├── ca_cert.pem
+        ├── ca_cert_chain.pem
+        ├── ca_key.pem
+        ├── client_cert.pem
+        ├── client_key.pem
+        ├── initial_client_cert.pem
+        ├── initial_client_key.pem
+        ├── server_cert.pem
+        └── server_key.pem
+
