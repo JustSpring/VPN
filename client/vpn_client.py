@@ -11,6 +11,7 @@ import datetime
 import ctypes
 import winreg
 import pyotp
+import errno
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization, hashes
@@ -28,13 +29,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # size of each chunk when we send/receive data
-BUFFER_SIZE = 65_536
+BUFFER_SIZE = 16_384
 
 
 class Client:
     def __init__(self):
         self.client_socket = None
         self.control_socket = None
+        self.local_proxy_srv = None
         self.proxy_list = []
         self.data_sent = 0
         self.current_index = 0
@@ -137,6 +139,7 @@ class Client:
         except Exception as e:
             logger.error(f"Error retrieving certificates: {e}")
             raise
+        return 0
 
     def create_ssl_context(self):
         """Prepare the SSL context for VPN data connection."""
@@ -164,7 +167,7 @@ class Client:
             server_hostname="clientVPN.example.com"
         )
         logger.info("Secure connection established.")
-        # TODO stop running if not server
+
         try:
             server_cert_bin = self.client_socket.getpeercert(binary_form=True)
             if server_cert_bin:
@@ -177,6 +180,7 @@ class Client:
                     logger.info("Server certificate matches known certificate.")
                 else:
                     logger.error("Server certificate mismatch!")
+                    return False
             else:
                 logger.warning("No server certificate received.")
         except Exception as e:
@@ -186,38 +190,69 @@ class Client:
         """Listen locally and tunnel data over the VPN."""
 
         logger.info(f"Starting local proxy server on {host}:{port}")
-        local_srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            local_srv.bind((host, port))
-            local_srv.listen(5)
-            logger.info(f"Local proxy listening on {host}:{port}")
-            # let the server know our cert serial
-            self.send_frame({"type": "CHANGE_NAME", "channel_id": 0},
-                            str(self.serial).encode())
 
-            while True:
-                conn, _ = local_srv.accept()
-                # handle each incoming local client in its own thread
+        local_srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        local_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        local_srv.bind((host, port))
+        local_srv.listen(100)
+
+        # store a handle so we can close it from another thread when kill is raised
+        self.local_proxy_srv = local_srv
+        logger.info(f"Local proxy listening on {host}:{port}")
+        self.send_frame({"type": "CHANGE_NAME", "channel_id": 0},
+                        str(self.serial).encode())
+        try:
+            while not self.kill:
+                try:
+                    conn, _ = local_srv.accept()
+                except OSError:
+                    # listening socket was closed elsewhere
+                    break
+
+                # double-check in case kill went up while we were in accept()
+                if self.kill:
+                    conn.close()
+                    break
+
                 threading.Thread(
                     target=self.handle_local_clients,
                     args=(conn,),
                     daemon=True
                 ).start()
-        except Exception as e:
-            logger.error(f"Proxy server error: {e}")
         finally:
-            local_srv.close()
+            try:
+                local_srv.close()
+            except Exception:
+                pass
+            logger.info("Local proxy server stopped")
 
     def handle_local_clients(self, local_sock):
         """Assign a channel ID and start forwarding for a new local client."""
-
+        if self.kill:
+            try:
+                local_sock.close()
+            finally:
+                return
         cid = self.next_channel_id
         self.next_channel_id += 1
         with self.local_channel_lock:
             self.local_channel_map[cid] = local_sock
 
         # inform server to open a new channel
-        self.send_frame({"type": "OPEN_CHANNEL", "channel_id": cid}, b"")
+        try:
+            self.send_frame({"type": "OPEN_CHANNEL", "channel_id": cid}, b"")
+        except Exception as e:
+            logger.error(f"Couldn't OPEN_CHANNEL for {cid}: {e}")
+            # cleanup and just exit this handler
+            try:
+                local_sock.close()
+            except:
+                pass
+            with self.local_channel_lock:
+                self.local_channel_map.pop(cid, None)
+            return
+
+        # only start forwarding if OPEN_CHANNEL succeeded
         threading.Thread(
             target=self.forward_local_to_server,
             args=(cid, local_sock),
@@ -225,96 +260,235 @@ class Client:
         ).start()
 
     def forward_local_to_server(self, channel_id, local_sock):
-        """Read from local socket and send data across VPN to server."""
+        """
+        Transfer bytes from the local TCP client into the VPN tunnel.
+        """
+        local_sock.setblocking(False)
+        half_closed = False  # True after FIN from browser
+
         try:
             while True:
-                data = local_sock.recv(BUFFER_SIZE)
-                if not data:
+                if not half_closed:
+                    try:
+                        data = local_sock.recv(BUFFER_SIZE)
+                    except (BlockingIOError, ConnectionResetError):
+                        data = None  # no new data right now
+                    except OSError:
+                        data = None
+                        half_closed = True
+
+                    if data is None:
+                        pass  # nothing to send this iteration
+
+                    elif data == b"":  # FIN from browser (write side closed)
+                        half_closed = True
+
+                    else:
+                        # normal upstream data
+                        self.send_frame({"type": "DATA",
+                                         "channel_id": channel_id}, data)
+                        self.update(len(data))
+
+                if self.kill or channel_id not in self.local_channel_map:
                     break
-                self.send_frame({"type": "DATA", "channel_id": channel_id}, data)
-        except Exception as e:
-            logger.error(f"Error in forward_local_to_server: {e}")
+                time.sleep(0.01)
+
         finally:
-            self.send_frame({"type": "CLOSE_CHANNEL", "channel_id": channel_id}, b"")
+            # Actual teardown happens when read_loop processes CLOSE_CHANNEL
+            try:
+                local_sock.close()
+            except OSError:
+                pass
 
     def send_frame(self, header, payload):
         """Package a length + header + payload and send it over the VPN socket."""
 
+        if not self.client_socket or self.client_socket.fileno() < 0:
+            raise OSError("No live VPN socket for send_frame")
+
         frame = pickle.dumps((header, payload))
-        length = len(frame).to_bytes(4, "big")
-        if not self.client_socket:
-            logger.error("No client socket to send frame")
-            return
+        packet = len(frame).to_bytes(4, "big") + frame
+        view = memoryview(packet)
+
         with self.send_lock:
-            try:
-                self.client_socket.sendall(length + frame)
-            except (ssl.SSLError, OSError) as e:
-                logger.error(f"Socket send error: {e}")
-                self.client_socket.close()
+            while view:
+                try:
+                    sent = self.client_socket.send(view)
+                    view = view[sent:]
+
+                except ssl.SSLWantWriteError:
+                    time.sleep(0.005)
+                    continue
+
+                except OSError as e:
+                    if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, 10035):
+                        time.sleep(0.005)
+                        continue
+                    logger.error(f"Socket send fatal: {e}")
+                    raise
+
+    # def _recv_all(self, n):
+    #     """
+    #     Read exactly n bytes from self.client_socket.
+    #     """
+    #     buf = b""
+    #     while len(buf) < n:
+    #         try:
+    #             chunk = self.client_socket.recv(n - len(buf))
+    #             if not chunk:  # EOF  connection closed gracefully
+    #                 return None
+    #             buf += chunk
+    #         except (ssl.SSLWantReadError, socket.timeout, BlockingIOError):
+    #             # non-fatal – just try again until timeout in select()
+    #             continue
+    #     return buf
 
     def read_loop(self):
         """Continuously read incoming frames from server and locally."""
 
-        self.client_socket.settimeout(0.5)
-        while True:
-            with self.local_channel_lock:
-                localsocks = list(self.local_channel_map.values())
-            # watch both server socket and all local channels
-            to_monitor = [self.client_socket] + [s for s in localsocks if s]
-            readable, _, _ = select.select(to_monitor, [], [], 0.5)
+        self.client_socket.setblocking(False)
+        rx_buf = bytearray()  # holds incoming data
+        expected_len = None   # how long the next full frame is supposed to be
 
-            for sock in readable:
-                if sock is self.client_socket:
-                    # data from server (to local)
+        def process_frame(hdr, payload):
+            cid = hdr["channel_id"] # cid= channel ID
+
+            if hdr["type"] == "CLOSE_CHANNEL": # hdr= header
+                # close local socket when the server says it's done
+                with self.local_channel_lock:
+                    s = self.local_channel_map.pop(cid, None)
+                if s:
                     try:
-                        length_bytes = sock.recv(4)
-                    except ConnectionResetError:
-                        logger.warning("Proxy disconnected")
-                        self.kill=True
-                        self.kill_reason = "Proxy disconnected"
-                    except (ssl.SSLWantReadError, socket.timeout, BlockingIOError):
-                        continue
-                    if not length_bytes:
-                        logger.info("Server disconnected")
-                        return
-                    frame_len = int.from_bytes(length_bytes, "big")
-                    data = b""
-                    while len(data) < frame_len:
+                        s.shutdown(socket.SHUT_WR)   # tell browser we're done writing
+                    except OSError:
+                        pass
+                    s.close()
+
+            elif hdr["type"] == "DATA":
+                # server sent some data we need to forward to the local browser
+                with self.local_channel_lock:
+                    s = self.local_channel_map.get(cid)
+                if s:
+                    try:
+                        logger.info(f"[←] ch{cid} {len(payload)} bytes server→local")
+                        s.sendall(payload)
+                        self.update(len(payload))
+                    except Exception as e:
+                        logger.error(f"local send on ch{cid}: {e}")
+                        s.close()
+                        with self.local_channel_lock:
+                            self.local_channel_map.pop(cid, None)
                         try:
-                            chunk = sock.recv(frame_len - len(data))
-                            if not chunk:
-                                break
-                            data += chunk
-                        except (ssl.SSLWantReadError, socket.timeout,
-                                BlockingIOError, ConnectionResetError):
-                            continue
-                    if data:
-                        hdr, payload = pickle.loads(data)
-                        cid = hdr["channel_id"]
-                        if hdr["type"] == "CLOSE_CHANNEL":
-                            with self.local_channel_lock:
-                                s = self.local_channel_map.pop(cid, None)
-                            if s:
-                                s.close()
-                        elif hdr["type"] == "DATA":
-                            s = self.local_channel_map.get(cid)
-                            if s:
-                                try:
-                                    s.sendall(payload)
-                                except Exception as e:
-                                    logger.error(f"Forward error: {e}")
+                            self.send_frame({"type": "CLOSE_CHANNEL", "channel_id": cid}, b"")
+                        except Exception:
+                            pass
                 else:
-                    # data from a local client (to server)
+                    # local socket is already gone so notify server to close too
                     try:
-                        data = sock.recv(BUFFER_SIZE)
-                    except (ssl.SSLWantReadError, socket.timeout,
-                            BlockingIOError, ConnectionAbortedError):
+                        self.send_frame({"type": "CLOSE_CHANNEL", "channel_id": cid}, b"")
+                    except Exception:
+                        pass
+
+        while True:
+
+            # build the list of sockets to monitor (VPN socket + all browser sockets)
+            with self.local_channel_lock:
+                local_socks = [s for s in self.local_channel_map.values()
+                               if s and s.fileno() >= 0]
+            if self.client_socket.fileno() < 0:
+                logger.warning("TLS socket closed – leaving read_loop")
+                return
+            sockets_to_monitor = [self.client_socket] + local_socks
+
+            try:
+                readable, _, _ = select.select(sockets_to_monitor, [], [], 0.5)
+            except ValueError:
+                # One of the sockets probably got closed right after we checked it
+                continue
+
+            # Incoming data
+            if self.client_socket in readable:
+                try:
+                    chunk = self.client_socket.recv(BUFFER_SIZE)
+                except ssl.SSLWantReadError:
+                    chunk = b""
+                except OSError as e:
+                    if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, 10035):
+                        chunk = b""
+                    else:
+                        logger.warning(f"TLS recv fatal: {e}")
+                        return
+
+                except ssl.SSLZeroReturnError:
+                    logger.info("Server closed TLS connection")
+                    return
+
+                if chunk:
+                    rx_buf += chunk
+
+                # Try to unpack as many full frames as we've got
+                while True:
+                    if expected_len is None:
+                        if len(rx_buf) < 4:
+                            break
+                        expected_len = int.from_bytes(rx_buf[:4], "big")
+                        del rx_buf[:4]
+
+                    if len(rx_buf) < expected_len:
+                        break
+
+                    frame = bytes(rx_buf[:expected_len])
+                    del rx_buf[:expected_len]
+                    expected_len = None
+
+                    try:
+                        hdr, payload = pickle.loads(frame)
+                    except Exception as e:
+                        logger.error(f"frame decode error: {e}")
                         continue
-                    if data:
-                        cid = next((k for k,v in self.local_channel_map.items() if v==sock), None)
+
+                    process_frame(hdr, payload)
+
+            for sock in (s for s in readable if s is not self.client_socket):
+                # local to server
+                if sock.fileno() < 0:  # ignore dead sockets
+                    continue
+
+                try:
+                    data = sock.recv(BUFFER_SIZE)
+                except (BlockingIOError, ssl.SSLWantReadError,
+                        ssl.SSLZeroReturnError, ConnectionResetError,
+                        ConnectionAbortedError):
+                    continue
+                except OSError as e:
+                    logger.warning(f"dead local socket: {e}")
+                    data = b""
+
+                if not data:
+                    # browser closed the connection so clean it up
+                    with self.local_channel_lock:
+                        cid = next((k for k, v in self.local_channel_map.items()
+                                    if v == sock), None)
                         if cid is not None:
-                            self.send_frame({"type": "DATA","channel_id":cid}, data)
-                            self.update(len(data))
+                            try:
+                                self.send_frame({"type": "CLOSE_CHANNEL",
+                                                 "channel_id": cid}, b"")
+                            except Exception:
+                                pass
+                            self.local_channel_map.pop(cid, None)
+                    sock.close()
+                    continue
+                    
+                # normal data upload from browser to server
+                with self.local_channel_lock:
+                    cid = next((k for k, v in self.local_channel_map.items()
+                                if v == sock), None)
+                if cid is not None:
+                    try:
+                        self.send_frame({"type": "DATA", "channel_id": cid}, data)
+                        self.update(len(data))
+                    except Exception as e:
+                        logger.error(f"send DATA on ch{cid}: {e}")
 
     def update(self, l):
         """Keep a rolling window to calc transfer speed."""
@@ -329,15 +503,11 @@ class Client:
                 idx = (idx + 1) % self.stats["window_size"]
                 # Subtract the bytes that were in this slot from the total
                 self.stats["total_bytes"] -= self.stats["arr"][idx]
-                # If that slot had activity remove from active_seconds
-                if self.stats["arr"][idx] > 0:
-                    self.stats["active_seconds"] -= 1
-                    self.stats["arr"][idx] = 0
+                # If that slot had activity remove it
+                self.stats["arr"][idx] = 0
             self.stats["current_index"] = idx
 
-        # If this is the first byte in the current second slot count another active second
-        if self.stats["arr"][idx] == 0:
-            self.stats["active_seconds"] += 1
+
         # Add the new byte count to this slot
         self.stats["arr"][idx] += l
         self.stats["total_bytes"] += l
@@ -444,7 +614,7 @@ class Client:
             logger.error(f"Control connection error: {e}")
         finally:
             ss.close()
-            self.kill_reason = "Control server error2"
+            self.kill_reason = "Server disconnected"
             self.kill=True
             logger.info("Control connection closed")
 
@@ -458,7 +628,6 @@ class Client:
         """set up SSL, start data threads, and enable proxy."""
         self.create_client_socket()
         threading.Thread(target=self.read_loop, daemon=True).start()
-        # self.enable_proxy('127.0.0.1:9090')
         self.start_local_proxy_server()
 
 
