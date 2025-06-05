@@ -15,8 +15,8 @@ from cryptography import x509
 import manage_db
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-# Maximum number of bytes to read at once
 
+# Maximum number of bytes to read at once
 BUFFER_SIZE=65536
 class Server:
     """
@@ -45,7 +45,7 @@ class Server:
             keyfile=Addresses.SERVER_KEY_PATH
         )
         context.verify_mode = ssl.CERT_REQUIRED  # demand client certs
-        context.check_hostname = False
+        # context.check_hostname = False
         context.load_verify_locations("certificates/ca_cert.pem")
         self.context = context
         logging.info("Standard SSL context created.")
@@ -61,7 +61,7 @@ class Server:
         )
         # skip client cert verification for auth service (they still didn't get it)
         cert_context.verify_mod = ssl.CERT_NONE
-        cert_context.check_hostname = False
+        # cert_context.check_hostname = False
         cert_context.load_verify_locations("certificates/ca_cert.pem")
         self.cert_context = cert_context
         logging.info("Certificate SSL context created.")
@@ -153,7 +153,6 @@ class Server:
                 secure_socket = self.control_context.wrap_socket(connection, server_side=True)
                 # Store by client IP for kicking.
                 self.clients_socket[client_address[0]]=secure_socket
-
                 cipher = secure_socket.cipher()
                 logging.info(f"TLS Cipher Suite Used: {cipher[0]}, Protocol: {cipher[1]}, Key Bits: {cipher[2]}")
 
@@ -221,7 +220,7 @@ class Server:
         """Test TCP connection to given ip:port. Returns True if open."""
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(5)  # Timeout for the socket operation
+        sock.settimeout(2)  # Timeout for the socket operation
         try:
             result = sock.connect_ex((ip, port))
             if result == 0:
@@ -233,17 +232,6 @@ class Server:
             return False
         finally:
             sock.close()
-
-    def recv_exact(sock, n):
-        """Read exactly n bytes from a socket or return None if stream closed."""
-
-        buf = b''
-        while len(buf) < n:
-            chunk = sock.recv(n - len(buf))
-            if not chunk:
-                return None
-            buf += chunk
-        return buf
 
     def check_user_transfer_cert(self,socket, client_address):
         """Handle authentication requests and issue certificates."""
@@ -273,50 +261,60 @@ class Server:
             logging.error(f"Error in check user & transfer_cert: {e}")
             socket.close()
 
-    def tunnel(self,client_socket, client_addr):
+    def tunnel(self, client_socket, client_addr):
         """Forward traffic between the client and a chosen proxy."""
+        logging.info(f"[TUNNEL] STARTING tunnel for {client_addr}")
 
-        logging.info("STARTING TUNNEL")
         proxy_port = Addresses.SERVER_PROXY_PORT
         proxy_host = manage_db.get_active_proxy(ip=client_addr[0])
 
-
         proxy_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         proxy_socket.connect((proxy_host, proxy_port))
-        logging.info(f"Connected to proxy server: {proxy_host}:{proxy_port} from {client_addr}")
+        logging.info(f"[TUNNEL] Connected to proxy {proxy_host}:{proxy_port} for {client_addr}")
 
-        # Start forwarding in both directions using threads
-        client_to_proxy = threading.Thread(target=self.forward, args=(client_socket, proxy_socket), daemon=True)
-        proxy_to_client = threading.Thread(target=self.forward, args=(proxy_socket, client_socket), daemon=True)
-        client_to_proxy.start()
-        proxy_to_client.start()
+        # spawn bi-directional forwards
+        t1 = threading.Thread(
+            target=self.forward,
+            args=(client_socket, proxy_socket, f"{client_addr} → {proxy_host}:{proxy_port}"),
+            daemon=True
+        )
+        t2 = threading.Thread(
+            target=self.forward,
+            args=(proxy_socket, client_socket, f"{proxy_host}:{proxy_port} → {client_addr}"),
+            daemon=True
+        )
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        logging.info(f"[TUNNEL] CLOSED tunnel for {client_addr}")
 
-        # Wait for both threads to finish
-        client_to_proxy.join()
-        proxy_to_client.join()
-
-
-    def forward(self, source, destination):
-        """Read from source and write to destination until closed."""
-
+    def forward(self, source, destination, tag):
+        """Read from source and write to destination until closed, logging each chunk."""
         try:
             while True:
                 data = source.recv(BUFFER_SIZE)
                 if not data:
-                    source.shutdown(socket.SHUT_RD)
+                    logging.info(f"[FORWARD {tag}] EOF reached, shutting down.")
+                    try:
+                        source.shutdown(socket.SHUT_RD)
+                    except:
+                        pass
                     break
+
+                logging.info(f"[FORWARD {tag}] {len(data)} bytes")
                 destination.sendall(data)
+
         except Exception as e:
-            logging.error(f"Error forwarding data: {e}")
+            logging.error(f"[FORWARD {tag}] Error: {e}")
+
         finally:
-            try:
-                source.close()
-            except:
-                pass
-            try:
-                destination.close()
-            except:
-                pass
+            for s in (source, destination):
+                try:
+                    s.close()
+                except:
+                    pass
+
 
     def kick(self,ip):
         """Forcefully disconnect a control client by IP."""
