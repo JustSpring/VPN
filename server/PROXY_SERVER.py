@@ -1,3 +1,5 @@
+# Proxy_server.py
+
 import select
 import socket
 import threading
@@ -6,6 +8,7 @@ import pickle
 import sys
 import os
 from urllib.parse import urlparse
+import re
 
 # add parent directory to path for shared imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -13,7 +16,7 @@ from shared.config import Addresses
 import manage_db
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-BUFFER_SIZE = 65536
+BUFFER_SIZE = 16_384
 
 class Proxy:
     def __init__(self, host=Addresses.SERVER_PROXY_IPS[0], port=Addresses.SERVER_PROXY_PORT):
@@ -44,121 +47,194 @@ class Proxy:
         self.read_loop(channel_map, client_socket)
 
     def read_loop(self, channel_map, client_socket):
+        """
+        Handle requests.
+        """
         name = "NONE"
+
         try:
             while True:
-                # build monitored sockets
-                sockets = [client_socket] + [info["socket"] for info in channel_map.values() if info.get("socket")]
-                # detect closed client
+                # build the list of sockets we care about
+                sockets = [client_socket] + [
+                    info["socket"] for info in channel_map.values()
+                    if info.get("socket") and info["socket"].fileno() >= 0
+                ]
+
+                # quit if the socket already closed
                 if client_socket.fileno() < 0:
-                    logging.info("Client socket closed, exiting read_loop.")
                     return
 
                 readable, _, _ = select.select(sockets, [], [], 0.5)
+
                 for sock in readable:
+                    # ───────────────────── data FROM CLIENT ──────────────────
                     if sock is client_socket:
-                        # read frame length
+                        # read frame header length
                         try:
                             length_bytes = sock.recv(4)
                         except (ConnectionResetError, OSError) as e:
                             logging.info(f"Client disconnected/reset: {e}")
                             return
                         if not length_bytes:
-                            logging.info("Client disconnected cleanly.")
+                            logging.info("Client disconnected.")
                             return
+
                         frame_len = int.from_bytes(length_bytes, 'big')
-                        # read full frame
+
+                        # read the rest of the frame
                         frame_data = b''
                         while len(frame_data) < frame_len:
                             chunk = sock.recv(frame_len - len(frame_data))
                             if not chunk:
-                                logging.warning("Frame truncated; exiting read_loop.")
+                                logging.warning("Frame truncated; exiting.")
                                 return
                             frame_data += chunk
-                        # unpack
+
                         header, payload = pickle.loads(frame_data)
                         cid = header.get("channel_id")
 
-                        # handle control headers
                         if header.get("type") == "CHANGE_NAME":
                             name = manage_db.get_active_name(
-                                cert=payload.decode('utf-8', errors='ignore')
-                            )
-                        elif header.get("type") == "OPEN_CHANNEL":
-                            channel_map[cid] = {"socket": None, "host": None, "port": None, "protocol": None}
-                        elif header.get("type") == "DATA":
+                                cert=payload.decode('utf-8', errors='ignore'))
+                            continue
+
+                        if header.get("type") == "OPEN_CHANNEL":
+                            channel_map[cid] = {"socket": None,
+                                                "host": None,
+                                                "port": None,
+                                                "protocol": None}
+                            continue
+
+                        if header.get("type") == "CLOSE_CHANNEL":
+                            entry = channel_map.pop(cid, None)
+                            if entry and entry.get("socket"):
+                                try:
+                                    entry["socket"].shutdown(socket.SHUT_RDWR)
+                                except Exception:
+                                    pass
+                                entry["socket"].close()
+                            continue
+
+                        if header.get("type") == "DATA":
                             entry = channel_map.get(cid)
                             if not entry:
                                 continue
-                            # open downstream socket if first DATA
+
+                            # if first DATA frame open socket
                             if entry["socket"] is None:
                                 host, port = self.get_host_port(
-                                    payload.decode('utf-8', errors='ignore')
-                                )
-                                if not host or not port:
-                                    logging.error(f"Invalid host/port for channel {cid}, closing channel.")
+                                    payload.decode('utf-8', errors='ignore'))
+
+                                if not host:
+                                    logging.error(f"[Proxy] No host header "
+                                                  f"for channel {cid}; closing.")
+                                    self.send_frame({"type": "CLOSE_CHANNEL",
+                                                     "channel_id": cid},
+                                                     b"", client_socket)
                                     del channel_map[cid]
                                     continue
+
+                                logging.info(f"[Proxy] Opening downstream "
+                                             f"{cid} → {host}:{port}")
+                                downstream = socket.socket(socket.AF_INET,
+                                                           socket.SOCK_STREAM)
+                                downstream.settimeout(10)
                                 try:
-                                    downstream = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                                    downstream.settimeout(10)
                                     downstream.connect((host, port))
                                 except Exception as e:
-                                    logging.error(f"Could not connect to {host}:{port}: {e}")
+                                    logging.error(f"[Proxy] connect() failed "
+                                                  f"({cid}) {host}:{port}: {e}")
+                                    downstream.close()
+                                    self.send_frame({"type": "CLOSE_CHANNEL",
+                                                     "channel_id": cid},
+                                                     b"", client_socket)
                                     del channel_map[cid]
                                     continue
+
                                 proto = self.determine_protocol(payload, port)
-                                entry.update({"socket": downstream, "host": host, "port": port, "protocol": proto})
+                                entry.update({"socket": downstream,
+                                              "host": host,
+                                              "port": port,
+                                              "protocol": proto})
+
                                 if payload.startswith(b"CONNECT"):
-                                    # reply to client for CONNECT
-                                    self.send_frame(
-                                        {"type": "DATA", "channel_id": cid},
-                                        b"HTTP/1.1 200 Connection Established\r\n\r\n",
-                                        client_socket
-                                    )
+                                    self.send_frame({"type": "DATA",
+                                                     "channel_id": cid},
+                                                     b"HTTP/1.1 200 Connection "
+                                                     b"Established\r\n\r\n",
+                                                     client_socket)
                                 else:
                                     downstream.sendall(payload)
+                                    logging.info(f"[C→S] ch={cid:3}  {len(payload):5} bytes  →  "
+                                                 f"{host}:{port}   (initial)")
                             else:
-                                # normal data relay
                                 try:
                                     entry["socket"].sendall(payload)
+                                    logging.info(f"[C→S] ch={cid:3}  {len(payload):5} bytes  →  "
+                                                 f"{entry['host']}:{entry['port']}")
                                 except Exception as e:
-                                    logging.error(f"Error sending to downstream ({cid}): {e}")
+                                    logging.error(f"Downstream send error "
+                                                  f"({cid}): {e}")
                                     entry["socket"].close()
                                     del channel_map[cid]
+                                    self.send_frame({"type": "CLOSE_CHANNEL",
+                                                     "channel_id": cid},
+                                                     b"", client_socket)
+
+                            # logging
                             if entry and entry["host"]:
-                                manage_db.add_full_logging(name, entry["host"], entry["port"],
-                                                             entry["protocol"])
+                                manage_db.add_full_logging(
+                                    name, entry["host"],
+                                    entry["port"], entry["protocol"])
+
+                    # ───────────────── data FROM DOWNSTREAM ─────────────────
                     else:
-                        # data from remote host back to client
-                        cid = next((k for k, v in channel_map.items() if v.get("socket") == sock), None)
+                        cid = next((k for k, v in channel_map.items()
+                                    if v.get("socket") == sock), None)
                         if cid is None:
                             continue
+
                         try:
                             data = sock.recv(BUFFER_SIZE)
-                        except ConnectionResetError as e:
-                            logging.info(f"Remote host reset channel {cid}: {e}")
+                        except (ConnectionResetError, OSError) as e:
+                            logging.info(f"Remote reset on channel {cid}: {e}")
                             sock.close()
                             del channel_map[cid]
+                            self.send_frame({"type": "CLOSE_CHANNEL",
+                                             "channel_id": cid}, b"", client_socket)
                             continue
-                        if not data:
+
+                        if not data:                       # EOF from remote
                             logging.info(f"Channel {cid} closed by remote.")
                             sock.close()
                             del channel_map[cid]
+                            self.send_frame({"type": "CLOSE_CHANNEL",
+                                             "channel_id": cid},
+                                             b"", client_socket)
                             continue
-                        # forward back to client
-                        self.send_frame({"type": "DATA", "channel_id": cid}, data, client_socket)
+
+                        self.send_frame({"type": "DATA",
+                                         "channel_id": cid},
+                                         data, client_socket)
+                        logging.info(f"[S→C] ch={cid:3}  {len(data):5} bytes  ←  "
+                                     f"{channel_map[cid]['host']}:{channel_map[cid]['port']}")
+
         except Exception as e:
             logging.error(f"Unexpected error in read_loop: {e}")
+
         finally:
-            # cleanup
+            # tidy all sockets
             for entry in channel_map.values():
                 s = entry.get("socket")
                 if s:
-                    try: s.close()
-                    except: pass
-            try: client_socket.close()
-            except: pass
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+            try:
+                client_socket.close()
+            except Exception:
+                pass
 
     def send_frame(self, header, payload, client_socket):
         # drop if client closed
@@ -174,16 +250,33 @@ class Proxy:
 
     def get_host_port(self, payload_str):
         lines = payload_str.split('\n')
-        connect_line = next((l for l in lines if l.startswith("CONNECT")), None)
-        if connect_line:
-            parsed = urlparse(f"http://{connect_line.split()[1]}")
-        else:
-            parts = lines[0].split()
-            parsed = urlparse(parts[1]) if len(parts) > 1 else None
-        if not parsed:
-            return None, None
-        port = parsed.port or (443 if parsed.scheme == 'https' else 80)
-        return parsed.hostname, port
+
+        # 1) CONNECT host:port
+        if lines[0].startswith("CONNECT"):
+            hostport = lines[0].split()[1]
+            if ':' in hostport:
+                host, port = hostport.split(':', 1)
+                return host, int(port)
+            return hostport, 443
+
+        # 2) HTTP GET http://host/...
+        first = lines[0].split()
+        if len(first) > 1:
+            parsed = urlparse(first[1])
+            if parsed.hostname:
+                return parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
+
+        # 3) Host: header
+        for l in lines:
+            if l.lower().startswith("host:"):
+                hostport = l.split(":", 1)[1].strip()
+                if ':' in hostport:
+                    host, port = hostport.split(':', 1)
+                    return host, int(port)
+                return hostport, 80
+
+        # Could not determine
+        return None, None
 
     def determine_protocol(self, payload, port):
         txt = payload.decode('utf-8', errors='ignore').upper()
